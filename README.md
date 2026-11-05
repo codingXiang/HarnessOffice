@@ -14,7 +14,7 @@ HarnessOffice is a game-like AI office. Roles such as HR and PM appear in a pixe
 
 ## 跑 Mock mode demo
 
-畫面分兩塊。瀏覽器是 Group Chat（Hire、核准、Mock PR）。像素辦公室是 [PixelOffice](https://github.com/KalebKE/PixelOffice) 的桌面視窗，授權是 Apache-2.0（見 [`vendor/README.md`](vendor/README.md)）。Chat 把 AgentEvent 轉送到同一台機器的 `127.0.0.1:3003`（HTTP）和 `127.0.0.1:9997`（UDP）。不會呼叫 Hermes、OpenCode，也不寫 GitHub。
+畫面分兩塊。瀏覽器是 Group Chat（Hire、核准、Mock PR）。像素辦公室是 [PixelOffice](https://github.com/KalebKE/PixelOffice) 的桌面視窗，授權是 Apache-2.0（見 [`vendor/README.md`](vendor/README.md)）。Chat 把 AgentEvent 轉送到同一台機器的 `127.0.0.1:3003`（HTTP）和 `127.0.0.1:9997`（UDP）。沒有 Hermes 設定時不會呼叫 Hermes。不會呼叫 OpenCode，也不寫 GitHub。
 
 PixelOffice 沒有 npm 套件。它是 submodule：
 

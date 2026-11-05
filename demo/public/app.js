@@ -159,6 +159,11 @@ async function choose(candidateId) {
     reason: body.reason,
   });
   session = hired.session;
+  if (savedHermes?.configured && body.mode === "live") {
+    applyHermesMode(savedHermes, { reachable: true });
+  } else if (savedHermes?.configured && body.reason === "unreachable") {
+    applyHermesMode(savedHermes, { reachable: false });
+  }
   session.messages.push({
     from: "system",
     text: `Bot profile 已寫入 ${body.file}${body.fallback ? "（家目錄不可寫，改用 fallback）" : ""}。PixelOffice 會讓這位 Role 出現。`,
@@ -328,10 +333,17 @@ hermesForm.addEventListener("submit", async (event) => {
 });
 
 document.querySelector("#hermes-clear").addEventListener("click", async () => {
+  hermesEndpoint.value = "";
+  hermesToken.value = "";
+  hermesCloneFrom.value = "";
+  hermesProvider.value = "";
+  hermesModel.value = "";
+  hermesGroupName.value = "";
+  hermesRoomId.value = "";
   const response = await fetch("/api/hermes", {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ endpoint: "", clearToken: true, bot: { cloneFrom: "", provider: "", model: "" }, group: { name: "", roomId: "" } }),
+    body: JSON.stringify({ ...formSettings(""), clearToken: true }),
   });
   const body = await response.json();
   if (!response.ok) {

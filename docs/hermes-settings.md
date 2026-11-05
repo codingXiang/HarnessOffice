@@ -34,7 +34,7 @@ https://<你的 Hermes>/api/profiles
 
 `name` 用 Candidate id（例如 `pm-lin`）。`description` 是 Role、顯示名稱，以及範本上的職責。
 
-**Group Chat 名稱** 與 **room id** 會寫進 IaC store 的 Bot profile（`hermesGroup`）。目前沒有第二支已核對過的 HTTP，所以不會另外打一通 group API。
+**Group Chat 名稱** 與 **Group Chat id**（存成 Hermes 的 `roomId`）會寫進 IaC store 的 Bot profile（`hermesGroup`）。目前沒有第二支已核對過的 HTTP，所以不會另外打一通 group API。
 
 **憑證** 會以 `Authorization: Bearer …` 與 `X-Hermes-Session-Token` 送出。Dashboard 依閘門吃其中一種。這支 adapter 不打 API server 的 `/v1/chat/completions`。
 

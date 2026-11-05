@@ -124,6 +124,18 @@ function withGroup(profile, settings) {
   return { ...profile, hermesGroup: { name: settings.group.name, roomId: settings.group.roomId } };
 }
 
+function botProfile(template, { candidateId, displayName, createdBy }, settings) {
+  return withGroup(
+    {
+      ...structuredClone(template),
+      displayName,
+      candidateId,
+      createdBy,
+    },
+    settings,
+  );
+}
+
 export async function hireWithHermes({
   settings,
   role,
@@ -134,15 +146,7 @@ export async function hireWithHermes({
   timeoutMs,
 }) {
   const normalized = normalizeSettings(settings);
-  const base = withGroup(
-    {
-      ...structuredClone(template),
-      displayName,
-      candidateId,
-      createdBy: "mock-hermes",
-    },
-    normalized,
-  );
+  const base = botProfile(template, { candidateId, displayName, createdBy: "mock-hermes" }, normalized);
 
   if (!isConfigured(normalized)) {
     return { ok: true, mode: "mock", reason: "unconfigured", profile: base };
@@ -169,15 +173,7 @@ export async function hireWithHermes({
     mode: "live",
     reason: "created",
     profile: {
-      ...withGroup(
-        {
-          ...structuredClone(template),
-          displayName,
-          candidateId,
-          createdBy: "hermes",
-        },
-        normalized,
-      ),
+      ...botProfile(template, { candidateId, displayName, createdBy: "hermes" }, normalized),
       hermes: { name },
     },
   };
