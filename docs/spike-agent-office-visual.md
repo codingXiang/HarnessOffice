@@ -54,6 +54,18 @@ That script POSTs `/api/spike/roles` in this order:
 
 `SPIKE_URL` (default `http://127.0.0.1:4600`) and `SPIKE_DELAY` (default `1200` ms) change the script. Only `HR` and `PM` are accepted, and only those four phases.
 
+Each phase also puts that role's Mock Group Chat line on the card over their head (the vendored worker task card) and into the 3D chat. The sentences are the same ones PixelOffice speaks in `demo/office.mjs`: HR's opening line, the Role prompt, the Issue draft, the mock coding line, and the unsent Mock PR.
+
+Say any line yourself:
+
+```bash
+curl -s -X POST http://127.0.0.1:4600/api/spike/say \
+  -H 'content-type: application/json' \
+  -d '{"role":"PM","text":"請核准，或先不要。"}'
+```
+
+`HR`, `PM`, `Tech Lead`, `FE`, `BE`, and `QA` get a desk and a card. Any other `role` is chat-only. The PixelOffice page on port 4173 posts each new Group Chat line to `http://<this-host>:4600/api/spike/say` and ignores a spike that is not running. That bridge is still mock. Hermes is not called. When Hermes is connected later, its endpoint and bot or group settings come from the UI. See [`docs/adr/0003-hermes-settings-come-from-the-ui.md`](adr/0003-hermes-settings-come-from-the-ui.md).
+
 Same call by hand:
 
 ```bash

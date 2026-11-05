@@ -102,6 +102,9 @@ test("whoami succeeds and the demo seats HR then PM through idle, waiting, codin
         ["PM", "done", null, "desk-2"],
       ],
     );
+    assert.equal(updates[0].task.summary.includes("我是 HR，開場就在"), true);
+    assert.equal(updates[1].task.summary.includes("Issue 草稿"), true);
+    assert.equal(client.messages.some((m) => m.t === "chat" && m.name === "HR" && m.text.includes("我是 HR")), true);
     assert.equal(updates[2].acked, false);
     assert.equal(updates[4].pr.number, 102);
     assert.equal(updates[4].pr.url.includes("/pull/102"), true);
@@ -118,6 +121,18 @@ test("whoami succeeds and the demo seats HR then PM through idle, waiting, codin
       body: JSON.stringify({ role: "FE", phase: "appear" }),
     });
     assert.equal(unknown.status, 400);
+
+    const said = await fetch(`http://127.0.0.1:${port}/api/spike/say`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "Tech Lead", text: "Issue 還沒核准。我不會分派，也不會開始寫程式。" }),
+    });
+    assert.equal(said.status, 200);
+    const saidBody = await said.json();
+    assert.equal(saidBody.worker.deskId, "desk-3");
+    assert.equal(saidBody.worker.task.summary.includes("不會分派"), true);
+    const spoken = await until(client.messages, (m) => m.t === "worker.update" && m.worker.name === "Tech Lead");
+    assert.equal(spoken.worker.task.summary.includes("不會分派"), true);
 
     const hint = await fetch(`http://127.0.0.1:${port}/`);
     assert.equal(hint.status, 200);

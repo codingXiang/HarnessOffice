@@ -8,10 +8,17 @@
 export const FLOOR_ID = "harness";
 export const FLOOR_NAME = "HarnessOffice";
 
-export const ROLES = {
-  HR: { id: "role-hr", deskId: "desk-1", name: "HR", color: "#ef476f", sign: "#ef476f", prNumber: 101 },
-  PM: { id: "role-pm", deskId: "desk-2", name: "PM", color: "#4f86f7", sign: "#118ab2", prNumber: 102 },
+export const SPEAKERS = {
+  HR: { id: "role-hr", deskId: "desk-1", name: "HR", color: "#f0c14a", sign: "#ef476f", prNumber: 101 },
+  PM: { id: "role-pm", deskId: "desk-2", name: "PM", color: "#8eb6e0", sign: "#118ab2", prNumber: 102 },
+  "Tech Lead": { id: "role-tech-lead", deskId: "desk-3", name: "Tech Lead", color: "#c48ad4", sign: "#9b5de5", prNumber: 103 },
+  FE: { id: "role-fe", deskId: "desk-4", name: "FE", color: "#e07a5f", sign: "#f78c6b", prNumber: 104 },
+  BE: { id: "role-be", deskId: "desk-5", name: "BE", color: "#7dcea0", sign: "#06d6a0", prNumber: 105 },
+  QA: { id: "role-qa", deskId: "desk-6", name: "QA", color: "#d9d3c5", sign: "#ffd166", prNumber: 106 },
 };
+
+/** Phase API stays HR and PM. Other roles only speak when Group Chat says so. */
+export const ROLES = { HR: SPEAKERS.HR, PM: SPEAKERS.PM };
 
 export const PHASES = {
   appear: { status: "idle", acked: true, summary: "At the desk" },
@@ -20,7 +27,44 @@ export const PHASES = {
   pr: { status: "done", acked: false, summary: "Mock PR merged" },
 };
 
+/**
+ * Lines copied from the PixelOffice Mock Group Chat (`demo/office.mjs`).
+ * Each one is spoken by that role, and shown on the card over their head.
+ */
+export const LINES = {
+  HR: {
+    appear: "我是 HR，開場就在。要 Candidate 請 @HR，並說 Role：PM、Tech Lead、FE、BE 或 QA。選定之前不會 Hire。",
+    waiting: "告訴我 Role：PM、Tech Lead、FE、BE 或 QA。",
+    coding: "我只能為 PM、Tech Lead、FE、BE、QA 提出 Candidate。",
+    pr: "已 Hire 林可 擔任 PM。Mock mode：由 Hermes 建立 Bot，OpenCode 沒有參與。",
+  },
+  PM: {
+    appear: "Issue 草稿：做出一個看得到團隊的 Office。驗收條件：人可以在同一個 Group Chat 裡把需求說清楚；Issue 帶有驗收條件；人核准之前不開始寫程式。請核准，或先不要。",
+    waiting: "請核准，或先不要。",
+    coding: "Mock mode：FE 與 BE 正在寫程式。沒有啟動 OpenCode。",
+    pr: "Mock PR：做出一個看得到團隊的 Office。這不是 GitHub 上的 PR，沒有送出。",
+  },
+};
+
 const ZERO_USAGE = { input: 0, output: 0, cacheWrite: 0, cacheRead: 0, cost: 0, calls: 0 };
+
+function chatLine(role, text) {
+  return {
+    t: "chat",
+    from: role?.id ?? "spike",
+    name: role?.name ?? "Spike",
+    color: role?.color ?? "#ffd166",
+    text,
+    at: Date.now(),
+  };
+}
+
+function phaseOf(worker) {
+  if (worker.status === "needs_input") return "waiting";
+  if (worker.status === "working") return "coding";
+  if (worker.status === "done") return "pr";
+  return "appear";
+}
 
 function pullUrl(number) {
   return `https://github.com/codingXiang/HarnessOffice/pull/${number}`;
@@ -66,8 +110,8 @@ function workerRecord(role, phaseName, prev) {
     rows: 24,
     viewers: [],
     viewerIds: [],
-    task: { name: role.name, summary: phase.summary },
-    activity: phase.summary,
+    task: { name: role.name, summary: LINES[role.name]?.[phaseName] ?? phase.summary },
+    activity: LINES[role.name]?.[phaseName] ?? phase.summary,
   };
   if (phase.action) worker.action = phase.action;
   if (phase.status === "needs_input" || phase.status === "done") worker.waitingSince = Date.now();
@@ -184,7 +228,7 @@ export function createOffice() {
     if (!PHASES[phaseName]) return { error: "unknown-phase" };
     const worker = workerRecord(role, phaseName, workers.get(role.id));
     workers.set(role.id, worker);
-    const messages = [{ t: "worker.update", worker }];
+    const messages = [{ t: "worker.update", worker }, chatLine(role, worker.activity)];
     if (phaseName === "pr") {
       pulls.set(role.prNumber, mergedPull(role));
       messages.push({
@@ -196,12 +240,28 @@ export function createOffice() {
     return { worker, phase: phaseName, messages };
   }
 
+  /** A Mock Group Chat line. Known roles get it on the card over their head; anyone else is chat-only. */
+  function say(roleName, text) {
+    const line = typeof text === "string" ? text.trim().slice(0, 400) : "";
+    if (!line) return { error: "empty" };
+    const role = SPEAKERS[roleName];
+    const chat = chatLine(role, line);
+    if (!role) return { worker: null, messages: [{ ...chat, name: String(roleName || "Spike").slice(0, 24) }] };
+    const prev = workers.get(role.id);
+    const worker = workerRecord(role, prev ? phaseOf(prev) : "appear", prev);
+    worker.task = { name: role.name, summary: line };
+    worker.activity = line;
+    workers.set(role.id, worker);
+    return { worker, messages: [{ t: "worker.update", worker }, chat] };
+  }
+
   return {
     workers,
     pulls,
     floorView,
     welcome,
     upsert,
+    say,
     snapshot() {
       return { workers: [...workers.values()], pulls: [...pulls.values()] };
     },

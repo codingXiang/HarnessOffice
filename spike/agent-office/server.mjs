@@ -48,6 +48,7 @@ function sendJson(res, status, body) {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "content-length": Buffer.byteLength(payload),
+    "access-control-allow-origin": "*",
   });
   res.end(payload);
 }
@@ -132,6 +133,15 @@ export function createSpikeServer({ clientDist = defaultClientDist, office = cre
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     try {
+      if (req.method === "OPTIONS" && url.pathname.startsWith("/api/")) {
+        res.writeHead(204, {
+          "access-control-allow-origin": "*",
+          "access-control-allow-methods": "GET, POST, OPTIONS",
+          "access-control-allow-headers": "content-type",
+        });
+        res.end();
+        return;
+      }
       if (req.method === "GET" && url.pathname === "/api/whoami") {
         sendJson(res, 200, { ok: true, me: { admin: false } });
         return;
@@ -157,6 +167,17 @@ export function createSpikeServer({ clientDist = defaultClientDist, office = cre
         }
         for (const msg of result.messages) broadcast(msg);
         sendJson(res, 200, { worker: result.worker, phase: result.phase });
+        return;
+      }
+      if (req.method === "POST" && url.pathname === "/api/spike/say") {
+        const body = await readJson(req);
+        const result = office.say(body.role, body.text);
+        if (result.error) {
+          sendJson(res, 400, { error: result.error });
+          return;
+        }
+        for (const msg of result.messages) broadcast(msg);
+        sendJson(res, 200, { worker: result.worker, text: body.text });
         return;
       }
 
