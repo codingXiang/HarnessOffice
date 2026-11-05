@@ -9,12 +9,46 @@
   <body>
     <header class="top">
       <div>
-        <p class="eyebrow">Mock mode</p>
+        <p class="eyebrow" id="mode-label">Mock mode</p>
         <h1>HarnessOffice</h1>
       </div>
-      <p class="banner">這是展示。不會呼叫 Hermes、OpenCode，也不會寫入 GitHub。Office 畫面是同一台機器上的 PixelOffice 視窗。</p>
+      <p class="banner" id="banner">這是展示。不會呼叫 Hermes、OpenCode，也不會寫入 GitHub。Office 畫面是同一台機器上的 PixelOffice 視窗。</p>
     </header>
     <main>
+      <section class="chat settings" aria-label="Hermes 設定">
+        <div class="section-title">
+          <h2>Hermes 設定</h2>
+          <p id="hermes-status">Mock mode：尚未設定 Hermes。Hire 不會呼叫 Hermes。</p>
+        </div>
+        <form id="hermes-form">
+          <label for="hermes-endpoint">Hermes endpoint（建立 Bot 的完整網址）
+            <input id="hermes-endpoint" name="endpoint" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://hermes.example/api/profiles" />
+          </label>
+          <label for="hermes-token">憑證（Bearer token，留白表示不改）
+            <input id="hermes-token" name="token" type="password" autocomplete="off" />
+          </label>
+          <label for="hermes-clone-from">Bot：從哪個 profile 複製（clone from）
+            <input id="hermes-clone-from" name="cloneFrom" type="text" autocomplete="off" />
+          </label>
+          <label for="hermes-provider">Bot：provider
+            <input id="hermes-provider" name="provider" type="text" autocomplete="off" />
+          </label>
+          <label for="hermes-model">Bot：model
+            <input id="hermes-model" name="model" type="text" autocomplete="off" />
+          </label>
+          <label for="hermes-group-name">Group Chat 名稱
+            <input id="hermes-group-name" name="groupName" type="text" autocomplete="off" />
+          </label>
+          <label for="hermes-room-id">Group room id
+            <input id="hermes-room-id" name="roomId" type="text" autocomplete="off" />
+          </label>
+          <div class="actions">
+            <button type="submit">儲存設定</button>
+            <button type="button" id="hermes-probe">檢查連線</button>
+            <button type="button" id="hermes-clear">清空並回到 Mock mode</button>
+          </div>
+        </form>
+      </section>
       <section class="chat" aria-label="Group Chat">
         <div class="section-title">
           <h2>群組對話</h2>

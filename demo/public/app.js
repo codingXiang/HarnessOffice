@@ -31,6 +31,21 @@ function mirrorChatToSpike() {
   }
 }
 
+const STORAGE_KEY = "harness-office.hermes-settings";
+const modeLabel = document.querySelector("#mode-label");
+const banner = document.querySelector("#banner");
+const hermesStatus = document.querySelector("#hermes-status");
+const hermesForm = document.querySelector("#hermes-form");
+const hermesEndpoint = document.querySelector("#hermes-endpoint");
+const hermesToken = document.querySelector("#hermes-token");
+const hermesCloneFrom = document.querySelector("#hermes-clone-from");
+const hermesProvider = document.querySelector("#hermes-provider");
+const hermesModel = document.querySelector("#hermes-model");
+const hermesGroupName = document.querySelector("#hermes-group-name");
+const hermesRoomId = document.querySelector("#hermes-room-id");
+
+let savedHermes = null;
+
 const log = document.querySelector("#log");
 const issueCard = document.querySelector("#issue");
 const candidateBox = document.querySelector("#candidates");
@@ -131,12 +146,18 @@ async function choose(candidateId) {
   if (!response.ok) {
     session = {
       ...session,
-      messages: [...session.messages, { from: "system", text: "Bot profile 沒有寫入 IaC store，所以這次沒有 Hire。" }],
+      messages: [...session.messages, {
+        from: "system",
+        text: body.message || "Bot profile 沒有寫入 IaC store，所以這次沒有 Hire。",
+      }],
     };
     render();
     return;
   }
-  const hired = hire(session, candidateId, templates);
+  const hired = hire(session, candidateId, templates, {
+    createdBy: body.profile.createdBy,
+    reason: body.reason,
+  });
   session = hired.session;
   session.messages.push({
     from: "system",
@@ -155,10 +176,17 @@ async function play() {
   render();
 }
 
-document.querySelector("#composer").addEventListener("submit", (event) => {
+document.querySelector("#composer").addEventListener("submit", async (event) => {
   event.preventDefault();
   const text = draft.value.trim();
   if (!text) return;
+  const hireName = text.match(/^@HR\s+雇用\s+(.+)$/)?.[1]?.trim();
+  const named = session.pendingCandidates?.options.find((item) => item.displayName === hireName);
+  if (named) {
+    draft.value = "";
+    await choose(named.id);
+    return;
+  }
   const result = handleHumanMessage(session, text, templates);
   session = result.session;
   draft.value = "";
@@ -193,7 +221,160 @@ for (const role of ["PM", "Tech Lead", "FE", "BE", "QA"]) {
 }
 document.querySelector("#composer").prepend(quick);
 
+function formSettings(token) {
+  return {
+    endpoint: hermesEndpoint.value.trim(),
+    token,
+    bot: {
+      cloneFrom: hermesCloneFrom.value.trim(),
+      provider: hermesProvider.value.trim(),
+      model: hermesModel.value.trim(),
+    },
+    group: {
+      name: hermesGroupName.value.trim(),
+      roomId: hermesRoomId.value.trim(),
+    },
+  };
+}
+
+function fillHermesForm(settings) {
+  hermesEndpoint.value = settings.endpoint ?? "";
+  hermesCloneFrom.value = settings.bot?.cloneFrom ?? "";
+  hermesProvider.value = settings.bot?.provider ?? "";
+  hermesModel.value = settings.bot?.model ?? "";
+  hermesGroupName.value = settings.group?.name ?? "";
+  hermesRoomId.value = settings.group?.roomId ?? "";
+  hermesToken.value = "";
+}
+
+function rememberLocal(settings) {
+  const previous = readLocal();
+  const token = settings.token !== "" ? settings.token : (previous?.token ?? "");
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...settings, token }));
+}
+
+function readLocal() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function showHermesStatus(text) {
+  hermesStatus.textContent = text;
+}
+
+function applyHermesMode(settings, probe) {
+  savedHermes = settings;
+  if (!settings?.configured) {
+    document.title = "HarnessOffice · Mock mode";
+    modeLabel.textContent = "Mock mode";
+    banner.textContent = "這是展示。不會呼叫 Hermes、OpenCode，也不會寫入 GitHub。Office 畫面是同一台機器上的 PixelOffice 視窗。";
+    showHermesStatus("Mock mode：尚未設定 Hermes。Hire 不會呼叫 Hermes。");
+    return;
+  }
+  if (!probe) {
+    document.title = "HarnessOffice · Hermes 已設定";
+    modeLabel.textContent = "Hermes 已設定";
+    banner.textContent = "Hermes 已設定。Hire 會先檢查連線，連得上才建立 Bot。不會呼叫 OpenCode，也不會寫入 GitHub。";
+    showHermesStatus(settings.tokenSet ? "已儲存 Hermes 設定，憑證也在。還沒檢查連線。" : "已儲存 Hermes 設定。還沒檢查連線。");
+    return;
+  }
+  if (probe.reachable) {
+    document.title = "HarnessOffice · Hermes";
+    modeLabel.textContent = "Hermes";
+    banner.textContent = "Hermes endpoint 有回應。Hire 會要求 Hermes 建立 Bot。不會呼叫 OpenCode，也不會寫入 GitHub。";
+    showHermesStatus("Hermes endpoint 有回應。下一次 Hire 會要求它建立 Bot。");
+    return;
+  }
+  document.title = "HarnessOffice · Mock mode";
+  modeLabel.textContent = "Mock mode";
+  banner.textContent = "Mock mode：Hermes 連不上。Hire 仍會完成，但是 Mock，不會假裝已經建立 Bot。不會呼叫 OpenCode，也不會寫入 GitHub。";
+  showHermesStatus("Hermes 連不上。Hire 會用 Mock mode，不會假裝已建立 Bot。");
+}
+
+async function probeHermes() {
+  const response = await fetch("/api/hermes/probe", { method: "POST" });
+  const body = await response.json();
+  applyHermesMode(savedHermes ?? { configured: body.configured }, body);
+  return body;
+}
+
+hermesForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const payload = formSettings(hermesToken.value);
+  const response = await fetch("/api/hermes", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json();
+  if (!response.ok) {
+    showHermesStatus(body.message ?? "Hermes 設定沒有儲存。");
+    return;
+  }
+  rememberLocal(payload);
+  fillHermesForm(body);
+  applyHermesMode(body, null);
+  if (body.configured) {
+    try {
+      await probeHermes();
+    } catch {
+      showHermesStatus("檢查連線時出錯。Hire 會在按下時再試一次。");
+    }
+  }
+});
+
+document.querySelector("#hermes-clear").addEventListener("click", async () => {
+  const response = await fetch("/api/hermes", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ endpoint: "", clearToken: true, bot: { cloneFrom: "", provider: "", model: "" }, group: { name: "", roomId: "" } }),
+  });
+  const body = await response.json();
+  if (!response.ok) {
+    showHermesStatus(body.message ?? "沒有清掉 Hermes 設定。");
+    return;
+  }
+  localStorage.removeItem(STORAGE_KEY);
+  fillHermesForm(body);
+  applyHermesMode(body, null);
+});
+
+document.querySelector("#hermes-probe").addEventListener("click", async () => {
+  if (!savedHermes?.configured) {
+    showHermesStatus("Mock mode：尚未設定 Hermes。請先儲存 endpoint。");
+    return;
+  }
+  if (hermesEndpoint.value.trim() !== (savedHermes.endpoint ?? "")) {
+    showHermesStatus("表單和已儲存的 endpoint 不一樣。請先儲存，再檢查連線。");
+    return;
+  }
+  showHermesStatus("正在檢查 Hermes 連線…");
+  await probeHermes();
+});
+
 templates = await loadTemplates();
+const hermesResponse = await fetch("/api/hermes");
+const hermes = await hermesResponse.json();
+if (!hermes.configured) {
+  const local = readLocal();
+  if (local?.endpoint) {
+    fillHermesForm(local);
+    showHermesStatus("瀏覽器裡有尚未寫入的 Hermes 設定。按儲存之後，Hire 才會用它。現在仍是 Mock mode。");
+  } else {
+    applyHermesMode(hermes, null);
+  }
+} else {
+  fillHermesForm(hermes);
+  applyHermesMode(hermes, null);
+  probeHermes().catch(() => {
+    showHermesStatus("檢查連線時出錯。Hire 會在按下時再試一次。");
+  });
+}
+
 const iacResponse = await fetch("/api/iac");
 const iac = await iacResponse.json();
 iacNote.textContent = iac.fallback

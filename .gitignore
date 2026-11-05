@@ -1,3 +1,4 @@
 .iac-bots/
+.hermes-settings.json
 node_modules/
 vendor/agent-office/dist/

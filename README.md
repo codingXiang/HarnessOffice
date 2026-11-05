@@ -40,6 +40,20 @@ Bot profile 仍寫到 `~/harness-office-iac/bots/`。那個目錄不可寫時，
 
 行為測試：`npm test`
 
+## 接上 Hermes（仍不寫 GitHub、不啟動 OpenCode）
+
+Mock mode 仍是預設。要改成真的 Hire，在 chat 頁的 **Hermes 設定** 填 endpoint 與 Bot、Group 設定，不要在程式裡寫死 host。空著就繼續 Mock。設定存在 `~/harness-office-iac/hermes.json`（不能寫時是 `./.hermes-settings.json`），重開還在。瀏覽器也留一份 `localStorage`，但 Hire 讀的是那個檔。
+
+Endpoint 填 Hermes 建立 Bot 的完整網址，例如你自己的 dashboard：
+
+```text
+https://<你的 Hermes>/api/profiles
+```
+
+欄位怎麼對到 `POST /api/profiles`、連不上時為什麼仍是 Mock，以及這條 HTTP 哪些是已核對、哪些仍是假設，寫在 [`docs/hermes-settings.md`](docs/hermes-settings.md)。決定本身是 [ADR 0003](docs/adr/0003-hermes-settings-come-from-the-ui.md)。
+
+Hire 連得上時：Hermes 建立 Bot，Bot profile 仍寫入 IaC store，Role 出現在 Office，並加入 Group Chat。連不上時 Group Chat 會寫明這次是 Mock，不會假裝已經建立 Bot。
+
 建議走一遍：PixelOffice 裡先看到 HR → 在 chat `@HR PM` 再按 Hire → 同樣 Hire Tech Lead、FE、BE → `@PM 做一個像素 Office` → 核准 Issue → `@Tech Lead 分派` → 播放寫程式動畫。動畫結束是一張沒有送出的 Mock PR，FE 與 BE 在 PixelOffice 裡變成 success。
 
 Skills 以可編輯複本裝在 [`.agents/skills/`](.agents/skills/)（Cursor 的 installer 路徑；清單在 [`skills-lock.json`](skills-lock.json)）。一次性設定寫在 [`AGENTS.md`](AGENTS.md)：
@@ -48,7 +62,7 @@ Skills 以可編輯複本裝在 [`.agents/skills/`](.agents/skills/)（Cursor �
 - Triage 標籤：[`docs/agents/triage-labels.md`](docs/agents/triage-labels.md)。
 - 領域文件：根目錄 [`GLOSSARY.md`](GLOSSARY.md)，ADR 放在 [`docs/adr/`](docs/adr/)。說明見 [`docs/README.md`](docs/README.md) 與 [`docs/agents/domain.md`](docs/agents/domain.md)。
 
-產品本體還沒有接上 Hermes 或 OpenCode。現在能跑的是上面的 Mock mode demo。授權見 [LICENSE](LICENSE)（GPL-3.0）。裝進來的 skills 來自 mattpocock/skills，保留其 MIT 授權（[`.agents/skills/LICENSE`](.agents/skills/LICENSE)）。
+沒有填 Hermes 設定時，跑的就是上面的 Mock mode。OpenCode 與 GitHub 寫入仍不在這一步。授權見 [LICENSE](LICENSE)（GPL-3.0）。裝進來的 skills 來自 mattpocock/skills，保留其 MIT 授權（[`.agents/skills/LICENSE`](.agents/skills/LICENSE)）。
 
 ## 3D spike（agent-office 視覺層）
 

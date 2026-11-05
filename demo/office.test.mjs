@@ -57,6 +57,7 @@ test("Hire waits for a human selection, then adds the Role without touching the 
   assert.equal(hired.profile.runtime, "hermes");
   assert.equal(hired.profile.openCode, false);
   assert.equal(hired.profile.createdBy, "mock-hermes");
+  assert.match(hired.session.messages.at(-1).text, /Mock mode：由 Hermes 建立 Bot，OpenCode 沒有參與。/);
   assert.equal(templates.PM.displayName, null);
   assert.equal(Object.hasOwn(templates.PM, "createdBy"), false);
 });
@@ -103,6 +104,18 @@ test("coding stays stopped until the human approves the PM draft and the Tech Le
   assert.equal(pr.session.phase, "pr");
   assert.equal(pr.mockPr.sentToGitHub, false);
   assert.equal(pr.mockPr.title, "做一個像素 Office");
+});
+
+test("a live Hire says Hermes created the Bot, and an unreachable endpoint stays visibly Mock", () => {
+  const pending = requestCandidates(createSession(), "PM").session;
+  const live = hire(pending, "pm-lin", templates, { createdBy: "hermes", reason: "created" });
+  assert.equal(live.profile.createdBy, "hermes");
+  assert.match(live.session.messages.at(-1).text, /Hermes 已建立 Bot/);
+  assert.doesNotMatch(live.session.messages.at(-1).text, /Mock mode/);
+
+  const down = hire(pending, "pm-lin", templates, { reason: "unreachable" });
+  assert.equal(down.profile.createdBy, "mock-hermes");
+  assert.match(down.session.messages.at(-1).text, /Mock mode：Hermes 連不上，這次沒有建立 Bot/);
 });
 
 test("@ address parses Tech Lead as one Role", () => {
