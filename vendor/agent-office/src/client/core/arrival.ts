@@ -85,7 +85,13 @@ export function installArrival(ctx: Ctx, core: CoreState, parts: ArrivalParts) {
       // A hall of its own has nothing outside it to come back to (and its walls may have moved since).
       const b = plan().bounds;
       const inRoom = inOffice() || (mine.x > b.minX + 0.3 && mine.x < b.maxX - 0.3 && mine.z > b.minZ + 0.3 && mine.z < b.maxZ - 0.3);
-      if (sameMap && inRoom && !(inOffice() && (inElevator(mine.x, mine.z) || pastTheWing(mine, parts.worlds.officeWing()))) && player.fits(mine.x, mine.z, mine.y)) {
+      const inCar = inOffice() && (inElevator(mine.x, mine.z) || pastTheWing(mine, parts.worlds.officeWing()));
+      const onTheFloor = inRoom && !inCar && player.fits(mine.x, mine.z, mine.y);
+      // Spike: a fresh visit has no saved spot, so upstream always calls placeInCar, which also
+      // snaps a peer who is already outside the car back into it. The mock stands you on the floor.
+      // That is the same arrival as coming back (doors open, already out of the shaft). A saved spot
+      // on another map still rides the elevator.
+      if ((sameMap || !saved) && onTheFloor) {
         placeAt(mine);
         travel.arrive('back');
       } else {

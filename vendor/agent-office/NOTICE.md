@@ -10,4 +10,6 @@ This directory vendors only the Vite + three.js client and the shared protocol a
 
 It does not include `src/server`. HarnessOffice does not run agent-office's workers, PTY host, or GitHub floors.
 
+The client is the v0.1.211 sources plus two spike patches: a `spectator` camera (fixed overhead of desk 1 and desk 2), and a welcome arrival that stands a peer the server already placed on the floor instead of pulling them back into the elevator. Neither is in the upstream tag.
+
 HarnessOffice itself stays GPL-3.0. These vendored files stay MIT. Do not strip the MIT notice.

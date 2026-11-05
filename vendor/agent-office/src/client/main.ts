@@ -115,6 +115,9 @@ installKeyGuards(ctx, parts);
 parts.place = installPlace(ctx, core, parts);
 // Everyone arrives by elevator (the welcome says exactly where).
 parts.place.placeInCar();
+// ?view=spectator|first|third wins over the saved camera for this load. The spike defaults to spectator.
+const askedView = new URLSearchParams(location.search).get('view');
+if (askedView === 'spectator' || askedView === 'first' || askedView === 'third') parts.settings.view = askedView;
 parts.player.view = parts.settings.view;
 parts.hands = new Hands(store.profile.color, parts.me.skinColor);
 parts.you = installYou(ctx);

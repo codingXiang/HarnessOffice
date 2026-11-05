@@ -10,6 +10,20 @@ import { ceilingAt, groundAt } from './collide';
 /** Camera height above your feet in first person (the Person's eyes). */
 export const EYE_HEIGHT = 1.4;
 
+/**
+ * Spike spectator: a fixed elevated view of the north-west pod, where HarnessOffice seats HR
+ * (`desk-1`, x −11.6) and PM (`desk-2`, x −9.4) at z −4.55. Under the ceiling (6.8 m), looking
+ * north so both name tags sit in frame. It does not follow the player.
+ */
+export const SPECTATOR_CAMERA = {
+  x: -10.5,
+  y: 4.2,
+  z: -1.6,
+  lookX: -10.5,
+  lookY: 1.2,
+  lookZ: -4.9,
+} as const;
+
 /** The room the camera keeps to (see PlayerController.room). */
 export interface Room {
   minX: number;
@@ -43,6 +57,11 @@ export interface Followed {
  * `lift` up or down while you sit), or round behind you in third, where it eases over unless `snap`.
  */
 export function aimCamera(camera: THREE.PerspectiveCamera, p: Followed, bob: number, lift: number, snap: boolean) {
+  if (p.view === 'spectator') {
+    camera.position.set(SPECTATOR_CAMERA.x, SPECTATOR_CAMERA.y, SPECTATOR_CAMERA.z);
+    camera.lookAt(SPECTATOR_CAMERA.lookX, SPECTATOR_CAMERA.lookY, SPECTATOR_CAMERA.lookZ);
+    return;
+  }
   if (p.view === 'first') {
     camera.position.set(p.pos.x, p.pos.y + EYE_HEIGHT + bob + p.stepOffset + lift, p.pos.z);
     camera.rotation.set(p.lookPitch, p.camYaw, 0);

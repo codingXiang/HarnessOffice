@@ -145,6 +145,16 @@ export function installHud(ctx: Ctx, core: CoreState, parts: HudParts) {
       hanging.startHanging();
     },
   });
+  // Spike: U leaves the fixed overhead camera for first-person walking, and comes back.
+  ctx.keys.bind({
+    code: 'KeyU',
+    run: () => {
+      const next = settings.view === 'spectator' ? 'first' : 'spectator';
+      settings.view = next;
+      saveSettings(settings);
+      player.setView(next);
+    },
+  });
   function showSettings(pane?: SettingsPane) {
     openSettings(
       net,

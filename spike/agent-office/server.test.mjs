@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { WebSocket } from "ws";
 import { DEMO_STEPS } from "./demo.mjs";
-import { createSpikeServer, spikeBind } from "./server.mjs";
+import { FLOOR_SPAWN, createSpikeServer, spikeBind } from "./server.mjs";
 
 function listen(server) {
   return new Promise((resolve) => {
@@ -69,6 +69,13 @@ test("whoami succeeds and the demo seats HR then PM through idle, waiting, codin
     assert.equal(welcome.theme.active, null);
     assert.equal(welcome.you, welcome.peers[0].id);
     assert.equal(welcome.peers[0].floor, "harness");
+    assert.equal(welcome.floor, "harness");
+    // Guests start on the floor south of the HR/PM pod, not in the elevator car (about z −13..−10.7).
+    assert.deepEqual(
+      { x: welcome.peers[0].x, y: welcome.peers[0].y, z: welcome.peers[0].z, rotY: welcome.peers[0].rotY },
+      FLOOR_SPAWN,
+    );
+    assert.ok(welcome.peers[0].z > -10);
 
     client.ws.send(JSON.stringify({ t: "ping", at: 42 }));
     const pong = await until(client.messages, (m) => m.t === "pong");

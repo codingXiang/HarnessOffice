@@ -14,6 +14,7 @@ import { outsideSetting } from './settings-sky';
 import { choiceRow } from './settings-rows';
 
 const VIEWS: [ViewMode, string, string][] = [
+  ['spectator', '🛰️ Spectator', 'A fixed overhead view of HR and PM. U switches to walking. WASD does not move this camera.'],
   ['first', '👀 First person', 'See through your own eyes. Click the office to look around with the mouse and click things to use them. Esc frees the mouse.'],
   ['third', '🎥 Third person', 'Follow your character from behind. Drag to orbit the camera, scroll to zoom, and click things to use them.'],
 ];

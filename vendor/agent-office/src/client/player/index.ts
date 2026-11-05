@@ -152,6 +152,12 @@ export class PlayerController extends PlayerInput {
 
   update(dt: number) {
     dt = Math.min(dt, 0.05);
+    if (this.view === 'spectator') {
+      this.moving = false;
+      this.running = false;
+      this.updateCamera(true);
+      return;
+    }
     const k = this.keys;
     if (this.rig) {
       this.rig(dt);
@@ -287,7 +293,7 @@ export class PlayerController extends PlayerInput {
 
   updateCamera(snap = false) {
     aimCamera(this.camera, this, this.bob, this.lift, snap);
-    this.shake();
+    if (this.view !== 'spectator') this.shake();
   }
 
   /** The jitters: the view trembles a little, on top of wherever you're looking. Drunk, it rolls and sways. */

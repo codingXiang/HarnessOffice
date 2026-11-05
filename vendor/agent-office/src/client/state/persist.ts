@@ -34,7 +34,7 @@ export function saveProfile(p: Omit<Profile, 'look'> & { look?: Look }) {
   }
 }
 
-export type ViewMode = 'first' | 'third';
+export type ViewMode = 'first' | 'third' | 'spectator';
 
 /** The panels you can show or hide on screen, from the ☰ menu. */
 export type HudPanel = 'workers' | 'people' | 'spend' | 'limits' | 'chat' | 'floor';
@@ -127,10 +127,10 @@ export function rememberSpot(s: Spot) {
 }
 
 export function loadSettings(): Settings {
-  const s: Settings = { view: 'first', volume: 0.7, muted: false, music: 0.5, musicMuted: false, pageTurns: true, pushToTalk: false, notify: true, needsYouSound: 'once', hud: { ...HUD_DEFAULTS }, pins: [] };
+  const s: Settings = { view: 'spectator', volume: 0.7, muted: false, music: 0.5, musicMuted: false, pageTurns: true, pushToTalk: false, notify: true, needsYouSound: 'once', hud: { ...HUD_DEFAULTS }, pins: [] };
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null');
-    if (saved?.view === 'first' || saved?.view === 'third') s.view = saved.view;
+    if (saved?.view === 'first' || saved?.view === 'third' || saved?.view === 'spectator') s.view = saved.view;
     if (typeof saved?.volume === 'number' && Number.isFinite(saved.volume)) s.volume = Math.max(0, Math.min(1, saved.volume));
     if (typeof saved?.muted === 'boolean') s.muted = saved.muted;
     if (typeof saved?.music === 'number' && Number.isFinite(saved.music)) s.music = Math.max(0, Math.min(1, saved.music));

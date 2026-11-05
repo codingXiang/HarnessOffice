@@ -76,6 +76,12 @@ function readJson(req) {
   });
 }
 
+/**
+ * Open floor just south of the north-west desk pod (HR at desk-1, PM at desk-2).
+ * Outside the elevator car (that car is about x 7.3–9.7, z −13 to −10.7). Facing the pod (−z).
+ */
+export const FLOOR_SPAWN = { x: -10.5, y: 0, z: -1.2, rotY: Math.PI };
+
 function peerFrom(url, id) {
   const color = url.searchParams.get("color") ?? "";
   const num = (key, max) => {
@@ -93,10 +99,10 @@ function peerFrom(url, id) {
     name: named || `Guest ${id.slice(0, 3)}`,
     color: /^#[0-9a-fA-F]{6}$/.test(color) ? color : "#4f86f7",
     look: { skin: num("skin", 7), hair: num("hair", 9), style: num("style", 6) },
-    x: back ? coord("x", 8.5) : 8.5,
-    y: back ? coord("y", 0) : 0,
-    z: back ? coord("z", -11.87) : -11.87,
-    rotY: back ? coord("rotY", 0) : 0,
+    x: back ? coord("x", FLOOR_SPAWN.x) : FLOOR_SPAWN.x,
+    y: back ? coord("y", FLOOR_SPAWN.y) : FLOOR_SPAWN.y,
+    z: back ? coord("z", FLOOR_SPAWN.z) : FLOOR_SPAWN.z,
+    rotY: back ? coord("rotY", FLOOR_SPAWN.rotY) : FLOOR_SPAWN.rotY,
     moving: false,
     voice: false,
     muted: true,

@@ -157,7 +157,7 @@ export function createOffice() {
           from: "spike",
           name: "Spike",
           color: "#ffd166",
-          text: "Mock floor. HR is desk 1, PM is desk 2. npm run spike:office:demo moves them.",
+          text: "Spectator view of desk 1 (HR) and desk 2 (PM). Press U to walk, or open ?view=first. npm run spike:office:demo moves them.",
           at: Date.now(),
         },
       ],

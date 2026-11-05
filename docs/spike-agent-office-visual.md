@@ -15,10 +15,26 @@ From the repo root. The spike HTTP server binds `0.0.0.0` unless `HOST` is set, 
 ```bash
 npm install
 npm run spike:office:client   # installs and vite-builds the vendored client
-npm run spike:office          # http://127.0.0.1:4600  and  /ws
+npm run spike:office          # http://0.0.0.0:4600  and  /ws
 ```
 
-Open that URL. The first visit asks you to pick a character (the upstream client stores it in `localStorage` under `agent-office.profile`). You arrive in the elevator. WASD walks, mouse looks. HR is the character at **desk 1**, PM at **desk 2** (the north-west pod, signs over the desks). Press E on an empty desk does not hire a real agent; a toast points at the mock API.
+Restart the server after a client rebuild. The page is read from `vendor/agent-office/dist` on each request, but the welcome spawn lives in the Node process. Tailscale reaches this host on port 4600 (`HOST` defaults to `0.0.0.0`).
+
+Open that URL. The camera is a fixed overhead spectator aimed at the north-west pod: **desk 1 (HR)** and **desk 2 (PM)**. WASD does not move that camera. The first visit still asks you to pick a character (the upstream client stores it in `localStorage` under `agent-office.profile`); that choice does not change the camera.
+
+You are standing on the floor just south of that pod, not in the elevator shaft. `welcome.floor` is `harness`, so the shut-door path (`!store.floor`) does not run. A fresh welcome with that spot takes the client's `arrive('back')` path: doors open, you are already out of the car. Upstream only did that when this browser had a saved spot, and `placeInCar` pulled everyone else back into the shaft — including a peer the server had already stood outside it.
+
+| How | What you get |
+| --- | --- |
+| Open `/` with no saved view | Spectator. A saved view from ⚙️ Settings is kept. |
+| `?view=spectator` | Spectator for this load, even if a walk was saved. |
+| `?view=first` | First-person WASD. `?view=third` follows your character. |
+| **U** | Toggles spectator and first person, and saves the choice. |
+| ⚙️ Settings → You | Spectator, first person, or third person. |
+
+To walk: press **U** (or open `?view=first`), click the canvas, then WASD. W is toward where you are facing. The spawn faces the HR/PM pod.
+
+If a reconnect puts you back in the car: wait for the ding, the doors slide open, then walk out toward **+Z** (south, into the room). E at the elevator opens the floor list; it does not hire anyone. Press E on an empty desk does not start an agent; a toast points at the mock API.
 
 In another terminal, with the server still running:
 
@@ -132,10 +148,10 @@ Other notes from that run, not protocol crashes:
 - WebGL came up, so the client did not bounce to `/lite?why=webgl`. A machine without WebGL still will; that redirect is upstream.
 - The task card is prefixed `Custom ·` because these workers are `provider: "custom"`. The name tag over the head is still `HR` or `PM`.
 - From in front of the desk the body sits behind the laptop. That is the upstream seat, not a missing field.
-- Walking is the upstream first-person controller (WASD, mouse). A fixed spectator camera is a follow-up if that is awkward for watching desks.
+- The spike camera defaults to a fixed overhead view (`player.view === 'spectator'` in the vendored client). It is not an upstream mode. `U` or `?view=first` is the WASD walk.
 - Pressing E to hire, opening a terminal, and riding the elevator to another floor or the roof do not start workers. `floor.go` is answered with this same floor so the doors open again.
 - Login, lite, claim, and join HTML ship inside the vendored Vite build. They are not a second product.
 
 ## Out of scope
 
-Hermes, replacing PixelOffice, a spectator camera, and production polish.
+Hermes, replacing PixelOffice, and production polish. The spectator camera and the floor spawn are part of this spike.
