@@ -1,14 +1,16 @@
 # HarnessOffice
 
-HarnessOffice 是一間有遊戲感的 AI 辦公室：Hermes 擔任人資與專案管理機器人，OpenCode 負責寫程式，像素風的辦公室畫面呈現工作進行的樣子，而 GitHub（以及之後的 GitLab）是工作的真實來源。
+HarnessOffice 是一間有遊戲感的 AI 辦公室：HR、PM 等角色出現在像素風的 Office，Hermes 是這些角色的 runtime，OpenCode 負責寫程式，而 GitHub（以及之後的 GitLab）是 Issue 與 PR 的真實來源。
 
-HarnessOffice is a game-like AI office. Hermes runs the HR and PM bots, OpenCode does the coding, a pixel office view shows the work in progress, and GitHub — with GitLab as a later secondary tracker — is the source of truth.
+HarnessOffice is a game-like AI office. Roles such as HR and PM appear in a pixel Office, Hermes is their runtime, OpenCode does the coding, and GitHub — with GitLab as a later secondary tracker — is the source of truth for Issues and PRs.
 
 ## 開發流程
 
 開發沿用 [Matt Pocock 的 engineering skills](https://github.com/mattpocock/skills)：
 
 `/grill-with-docs` → `/to-spec` → `/to-tickets` → `/implement-spec`
+
+已定案的 grill 決定在 [`GLOSSARY.md`](GLOSSARY.md) 與 [`docs/adr/`](docs/adr/)。
 
 Skills 以可編輯複本裝在 [`.agents/skills/`](.agents/skills/)（Cursor 的 installer 路徑；清單在 [`skills-lock.json`](skills-lock.json)）。一次性設定寫在 [`AGENTS.md`](AGENTS.md)：
 

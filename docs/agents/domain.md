@@ -20,8 +20,8 @@ Single-context repo (this repo, and most repos):
 /
 ├── GLOSSARY.md
 ├── docs/adr/
-│   ├── 0001-event-sourced-orders.md
-│   └── 0002-postgres-for-write-model.md
+│   ├── 0001-bot-profiles-live-in-the-iac-store.md
+│   └── 0002-hermes-and-opencode-stay-separate-layers.md
 └── src/
 ```
 
