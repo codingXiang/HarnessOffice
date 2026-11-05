@@ -22,7 +22,7 @@ npm start
 
 同等指令：`node demo/server.mjs`
 
-瀏覽器打開 http://127.0.0.1:4173
+預設聽 `0.0.0.0:4173`，同一台機器用 http://127.0.0.1:4173 ，Tailscale 用這台機器的位址。只給本機：`HOST=127.0.0.1 npm start`
 
 預設把 Hire 的 Bot profile 寫到 `~/harness-office-iac/bots/`。那個目錄不可寫時，改寫到專案裡的 `./.iac-bots/`（已在 `.gitignore`，不要提交）。頁尾會寫出實際路徑。要指定目錄：
 
