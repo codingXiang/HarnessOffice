@@ -49,3 +49,7 @@ Skills 以可編輯複本裝在 [`.agents/skills/`](.agents/skills/)（Cursor �
 - 領域文件：根目錄 [`GLOSSARY.md`](GLOSSARY.md)，ADR 放在 [`docs/adr/`](docs/adr/)。說明見 [`docs/README.md`](docs/README.md) 與 [`docs/agents/domain.md`](docs/agents/domain.md)。
 
 產品本體還沒有接上 Hermes 或 OpenCode。現在能跑的是上面的 Mock mode demo。授權見 [LICENSE](LICENSE)（GPL-3.0）。裝進來的 skills 來自 mattpocock/skills，保留其 MIT 授權（[`.agents/skills/LICENSE`](.agents/skills/LICENSE)）。
+
+## 3D spike（agent-office 視覺層）
+
+PixelOffice 的 Mock mode 還在：`npm start` 沒有改。旁邊另有一層薄的 3D 畫面，借用 [agent-office](https://github.com/AgentSystemLabs/agent-office) **v0.1.211**（commit `852e2ab`，MIT）的 Vite + three.js client。沒有接 Claude、Codex、OpenCode、GitHub floors 或 PTY。執行步驟、`/ws` 裡哪些 welcome 欄位是必填、以及這個 spike 不打算合併的範圍，寫在 [`docs/spike-agent-office-visual.md`](docs/spike-agent-office-visual.md)。Vendored 程式與 MIT 聲明在 [`vendor/agent-office/`](vendor/agent-office/)。

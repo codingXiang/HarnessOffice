@@ -14,6 +14,23 @@ let previous = null;
 let templates = null;
 let writing = false;
 
+let mirrored = 0;
+
+/** The 3D spike on this host, port 4600. Missing spike is ignored. Hermes is not called. */
+function mirrorChatToSpike() {
+  const fresh = session.messages.slice(mirrored);
+  mirrored = session.messages.length;
+  const spike = `${location.protocol}//${location.hostname}:4600`;
+  for (const message of fresh) {
+    if (!message.text || message.from === "human") continue;
+    fetch(`${spike}/api/spike/say`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: message.from, text: message.text }),
+    }).catch(() => {});
+  }
+}
+
 const log = document.querySelector("#log");
 const issueCard = document.querySelector("#issue");
 const candidateBox = document.querySelector("#candidates");
@@ -61,6 +78,7 @@ function render() {
     log.append(item);
   }
   log.scrollTop = log.scrollHeight;
+  mirrorChatToSpike();
 
   if (session.issue) {
     issueCard.hidden = false;
