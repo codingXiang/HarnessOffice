@@ -21,24 +21,24 @@ _Avoid_: dry-run, fixture, stub
 ### Roles
 
 **Role**:
-Office 裡的一個位子。HR 開場就在；其餘角色經 Hire 才出現。
-_Avoid_: bot, agent, user
+Office 裡的一個位子，而且就是一個 Hermes Bot。HR 開場就在；其餘經 Hire 才出現。
+_Avoid_: OpenCode session, user, 純像素、背後沒有 Hermes Bot 的角色
 
 **HR**:
-開場時唯一固定在場的 Role。人在 Shared chat 以 @ 請它提出 Candidate；沒有人的確認就沒有 Hire。
-_Avoid_: recruiter, Hermes
+開場時唯一固定在場的 Hermes Bot。人在 Group Chat 以 @ 請它提出 Candidate；沒有人的確認就沒有 Hire。
+_Avoid_: recruiter, OpenCode
 
 **PM**:
-受雇的 Role。把需求收成一份帶驗收條件的 Issue。人核准該 Issue 之前，不算可以開始寫程式。
-_Avoid_: PO, product owner, spec bot
+受雇的 Hermes Bot。把需求收成一份帶驗收條件的 Issue。人核准該 Issue 之前，不算可以開始寫程式。
+_Avoid_: PO, product owner, OpenCode
 
 **Tech Lead**:
-受雇的 Role。面對已核准的 Issue，負責把工作拆開並分派給 Engineer（FE、BE 等）。
-_Avoid_: architect, engineering manager
+受雇的 Hermes Bot。面對已核准的 Issue，負責把工作拆開並分派給 Engineer（FE、BE 等）。
+_Avoid_: architect, engineering manager, OpenCode
 
 **Engineer**:
-受雇的專職 Role，分成 FE 與 BE。
-_Avoid_: developer bot, coder
+受雇的專職 Hermes Bot，分成 FE 與 BE。
+_Avoid_: OpenCode, coder runtime
 
 **FE**:
 負責畫面的 Engineer。
@@ -49,28 +49,36 @@ _Avoid_: frontend, UI dev
 _Avoid_: backend, API dev
 
 **QA**:
-受雇的專職 Role，負責品質。
-_Avoid_: tester, QC
+受雇的專職 Hermes Bot，負責品質。
+_Avoid_: tester, QC, OpenCode
 
 ### Hiring
 
 **Candidate**:
-為某個 Role 產生、供人挑選的一組選項，由模型產出。沒有可用的模型時，改由 Mock mode 提供假選項。
-_Avoid_: resume, prompt, persona
+HR 這個 Hermes Bot 為某個 Role 產生、供人挑選的一組選項。沒有可用的模型時，改由 Mock mode 提供假選項。OpenCode 不產生 Candidate。
+_Avoid_: resume, prompt, persona, OpenCode session
 
 **Hire**:
-人在 HR 提出的 Candidate 中作出的選擇。選擇成立時，該人出現在 Office，且有一份 Bot profile 寫入 IaC store。
-_Avoid_: onboard, deploy, recruit
+人在 HR 提出的 Candidate 中作出的選擇。選擇成立時，由 Hermes 建立新的 Hermes Bot：該人出現在 Office，且有一份 Bot profile 寫入 IaC store。OpenCode 不參與。
+_Avoid_: onboard, deploy, OpenCode
 
 **Bot profile**:
-面向 Hermes 的 Role 設定。它住在 IaC store，不在 HarnessOffice 這個 repo。
-_Avoid_: persona, system prompt, skill file
+一個 Hermes Bot 的 Role 設定，在 Hire 時由 Hermes 建立。它住在 IaC store，不在 HarnessOffice 這個 repo。
+_Avoid_: persona, system prompt, OpenCode config
 
 ### Collaboration
 
+**Project**:
+一件要組團隊來做的工作。一個 Project 對應一個 Group Chat。
+_Avoid_: repo, workspace, Office
+
+**Group Chat**:
+一個 Project 的 Hermes 群組對話。Office 裡的每個 Role 都在其中。用 @Role 對某人說話。產品裡把這個對話叫 Shared chat。
+_Avoid_: channel, thread, DM, Slack, 每人一間的私聊
+
 **Shared chat**:
-全辦公室共用的單一對話視窗。用 @Role 對某人說話。之後可以拆成多個視窗。
-_Avoid_: channel, thread, DM, Slack
+Group Chat 在產品裡的名字：一個 Project 的那一個 Hermes 群組對話。
+_Avoid_: 另一種聊天室, OpenCode session
 
 ### Work records
 
@@ -85,12 +93,12 @@ _Avoid_: MR, patch, diff
 ### Runtimes and stores
 
 **Hermes**:
-Role 與協作的 runtime。Bot profile 面向它。它不寫程式。
-_Avoid_: OpenCode, the Role itself
+每一個 Role 的 runtime。它持有 Project 的 Group Chat，並在 Hire 時建立新的 Hermes Bot。它不寫程式。
+_Avoid_: OpenCode
 
 **OpenCode**:
-寫程式的 runtime。展示時只模擬從寫程式到 PR 的動畫，不真的送出。
-_Avoid_: Hermes, IDE
+寫程式的 runtime。只有在出現寫程式需求時才進入，而且是在 PM 起草的 Issue 經人核准、Tech Lead 分派之後。它不產生 Candidate，也不建立 Bot。展示時只模擬從寫程式到 PR 的動畫，不真的送出。
+_Avoid_: Hermes, Hire, IDE
 
 **OpenChamber**:
 建在 OpenCode 上、用來觀看與交付程式工作的工作場所。展示同樣只模擬那條動畫。
