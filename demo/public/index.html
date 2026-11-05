@@ -12,27 +12,15 @@
         <p class="eyebrow">Mock mode</p>
         <h1>HarnessOffice</h1>
       </div>
-      <p class="banner">這是展示。不會呼叫 Hermes、OpenCode，也不會寫入 GitHub。每一個在場的 Role 都是 Hermes Bot。</p>
+      <p class="banner">這是展示。不會呼叫 Hermes、OpenCode，也不會寫入 GitHub。Office 畫面是同一台機器上的 PixelOffice 視窗。</p>
     </header>
     <main>
-      <section class="office" aria-label="Office">
-        <div class="sky" aria-hidden="true">
-          <span class="cloud c1"></span>
-          <span class="cloud c2"></span>
-          <span class="starfield"></span>
-        </div>
-        <div class="wall">
-          <span class="window"></span>
-          <h2 class="sign">Office</h2>
-          <span class="window"></span>
-        </div>
-        <div id="floor" class="floor"></div>
-      </section>
       <section class="chat" aria-label="Group Chat">
         <div class="section-title">
           <h2>群組對話</h2>
-          <p>Shared chat。一個 Project 只有這一間，用 @Role 找人。</p>
+          <p>Shared chat。一個 Project 只有這一間，用 @Role 找人。Hire 與狀態會送到 PixelOffice。</p>
         </div>
+        <p id="office-link" class="note">Office：在跑 demo 的那台機器打開 PixelOffice（事件 UDP 127.0.0.1:9997、HTTP 127.0.0.1:3003）。</p>
         <ol id="log" class="log"></ol>
         <div id="issue" class="issue" hidden></div>
         <div id="candidates" class="candidates"></div>
