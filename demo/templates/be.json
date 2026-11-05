@@ -1,0 +1,8 @@
+{
+  "role": "BE",
+  "runtime": "hermes",
+  "displayName": null,
+  "openCode": false,
+  "groupChat": "shared",
+  "responsibilities": ["負責服務與資料"]
+}

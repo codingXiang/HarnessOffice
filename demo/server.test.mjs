@@ -1,0 +1,57 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { createServer } from "./server.mjs";
+
+const root = path.dirname(fileURLToPath(import.meta.url));
+
+function listen(server) {
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve(server.address().port));
+  });
+}
+
+test("demo serves the office and writes a hired Bot profile from the template", async () => {
+  const iacDir = fs.mkdtempSync(path.join(os.tmpdir(), "ho-iac-"));
+  const before = fs.readFileSync(path.join(root, "templates", "fe.json"), "utf8");
+  const server = createServer({ root, iac: { dir: iacDir, fallback: false } });
+  const port = await listen(server);
+  try {
+    const page = await fetch(`http://127.0.0.1:${port}/`);
+    const html = await page.text();
+    assert.equal(page.status, 200);
+    assert.match(html, /Office/);
+    assert.match(html, /群組對話/);
+    assert.doesNotMatch(html, /吳像素/);
+
+    const office = await fetch(`http://127.0.0.1:${port}/office.mjs`);
+    assert.equal(office.status, 200);
+
+    const hired = await fetch(`http://127.0.0.1:${port}/api/hires`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "FE", candidateId: "fe-wu", displayName: "吳像素" }),
+    });
+    assert.equal(hired.status, 201);
+    const body = await hired.json();
+    assert.equal(body.profile.runtime, "hermes");
+    assert.equal(body.profile.openCode, false);
+    assert.equal(body.profile.displayName, "吳像素");
+    assert.equal(body.profile.createdBy, "mock-hermes");
+    const saved = JSON.parse(fs.readFileSync(body.file, "utf8"));
+    assert.equal(saved.candidateId, "fe-wu");
+    assert.equal(fs.readFileSync(path.join(root, "templates", "fe.json"), "utf8"), before);
+
+    const rejected = await fetch(`http://127.0.0.1:${port}/api/hires`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "HR", candidateId: "hr", displayName: "某人" }),
+    });
+    assert.equal(rejected.status, 400);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

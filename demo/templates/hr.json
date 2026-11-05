@@ -1,0 +1,8 @@
+{
+  "role": "HR",
+  "runtime": "hermes",
+  "displayName": null,
+  "openCode": false,
+  "groupChat": "shared",
+  "responsibilities": ["開場就在 Office", "提出 Candidate", "等人選定才算 Hire"]
+}

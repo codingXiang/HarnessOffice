@@ -1,0 +1,8 @@
+{
+  "role": "Tech Lead",
+  "runtime": "hermes",
+  "displayName": null,
+  "openCode": false,
+  "groupChat": "shared",
+  "responsibilities": ["在 Issue 核准後拆工作", "分派給 FE 與 BE"]
+}
