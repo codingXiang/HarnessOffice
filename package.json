@@ -4,6 +4,12 @@
   "type": "module",
   "scripts": {
     "start": "node demo/server.mjs",
-    "test": "node --test demo/office.test.mjs demo/iac.test.mjs demo/pixel-office-events.test.mjs demo/server.test.mjs"
+    "test": "node --test demo/office.test.mjs demo/iac.test.mjs demo/pixel-office-events.test.mjs demo/server.test.mjs spike/agent-office/server.test.mjs",
+    "spike:office": "node spike/agent-office/server.mjs",
+    "spike:office:demo": "node spike/agent-office/demo.mjs",
+    "spike:office:client": "npm --prefix vendor/agent-office install && npm --prefix vendor/agent-office run build"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
   }
 }

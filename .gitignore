@@ -1,2 +1,3 @@
 .iac-bots/
 node_modules/
+vendor/agent-office/dist/
