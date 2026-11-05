@@ -3,6 +3,8 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveIacDir, writeProfile } from "./iac.mjs";
+import { isAgentEvent } from "./pixel-office-events.mjs";
+import { createPixelOfficeForwarder } from "./pixel-office-forward.mjs";
 
 const demoRoot = path.dirname(fileURLToPath(import.meta.url));
 const MIME = {
@@ -65,11 +67,15 @@ function readJson(req) {
   });
 }
 
-export function createServer({ root = demoRoot, iac = resolveIacDir({ cwd: root }) } = {}) {
+export function createServer({
+  root = demoRoot,
+  iac = resolveIacDir({ cwd: root }),
+  pixelOffice = createPixelOfficeForwarder(),
+} = {}) {
   const templates = loadTemplates(path.join(root, "templates"));
   const publicDir = path.join(root, "public");
 
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     try {
       if (req.method === "GET" && url.pathname === "/api/iac") {
@@ -107,11 +113,29 @@ export function createServer({ root = demoRoot, iac = resolveIacDir({ cwd: root 
         sendJson(res, 201, { file, profile, iacDir: iac.dir, fallback: iac.fallback });
         return;
       }
+      if (req.method === "POST" && url.pathname === "/api/pixel-office/events") {
+        const body = await readJson(req);
+        const events = Array.isArray(body.events) ? body.events.slice(0, 20) : [];
+        const results = [];
+        for (const event of events) {
+          if (!isAgentEvent(event)) {
+            results.push({ ok: false });
+            continue;
+          }
+          results.push({ ok: true, ...(await pixelOffice.send(event)) });
+        }
+        sendJson(res, 200, { results });
+        return;
+      }
 
       let pathname = decodeURIComponent(url.pathname);
       if (pathname === "/") pathname = "/index.html";
       if (pathname === "/office.mjs") {
         sendFile(res, path.join(root, "office.mjs"));
+        return;
+      }
+      if (pathname === "/pixel-office-events.mjs") {
+        sendFile(res, path.join(root, "pixel-office-events.mjs"));
         return;
       }
       const target = path.resolve(publicDir, `.${pathname}`);
@@ -128,6 +152,8 @@ export function createServer({ root = demoRoot, iac = resolveIacDir({ cwd: root 
       sendJson(res, 400, { error: "bad-request" });
     }
   });
+  server.on("close", () => pixelOffice.close?.());
+  return server;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -135,7 +161,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const { host, port } = demoBind();
   const server = createServer({ iac });
   server.listen(port, host, () => {
-    console.log(`HarnessOffice demo (Mock mode) http://${host}:${port}`);
+    console.log(`HarnessOffice chat (Mock mode) http://${host}:${port}`);
+    console.log("PixelOffice events: HTTP http://127.0.0.1:3003/api/events and UDP 127.0.0.1:9997");
     console.log(`IaC store: ${iac.dir}${iac.fallback ? " (fallback)" : ""}`);
   });
 }

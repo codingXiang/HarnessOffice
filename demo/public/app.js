@@ -1,6 +1,5 @@
 import {
   approveIssue,
-  assignWork,
   createSession,
   finishMockPr,
   handleHumanMessage,
@@ -8,24 +7,13 @@ import {
   holdIssue,
   startMockCoding,
 } from "/office.mjs";
-
-const ROLE_COPY = {
-  HR: { task: "提出 Candidate", shirt: "#f0c14a", hair: "#3a2a22" },
-  PM: { task: "起草 Issue", shirt: "#8eb6e0", hair: "#1d2430" },
-  "Tech Lead": { task: "分派 FE / BE", shirt: "#c48ad4", hair: "#2a1d30" },
-  FE: { task: "畫面", shirt: "#e07a5f", hair: "#3a2218" },
-  BE: { task: "服務與資料", shirt: "#7dcea0", hair: "#143028" },
-  QA: { task: "品質", shirt: "#d9d3c5", hair: "#242424" },
-};
-
-const SEATS = ["HR", "PM", "Tech Lead", "FE", "BE", "QA"];
+import { eventsForTransition } from "/pixel-office-events.mjs";
 
 let session = createSession();
+let previous = null;
 let templates = null;
-let iac = null;
 let writing = false;
 
-const floor = document.querySelector("#floor");
 const log = document.querySelector("#log");
 const issueCard = document.querySelector("#issue");
 const candidateBox = document.querySelector("#candidates");
@@ -47,70 +35,19 @@ async function loadTemplates() {
   return loaded;
 }
 
-const LAYOUT = {
-  HR: ["6%", "6%"],
-  PM: ["36%", "6%"],
-  "Tech Lead": ["66%", "6%"],
-  FE: ["6%", "52%"],
-  BE: ["36%", "52%"],
-  QA: ["66%", "52%"],
-};
-
-const names = {};
-
-function esc(value) {
-  return String(value).replace(/[&<>"']/g, (char) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  }[char]));
-}
-
-function bubbleFor(present, assignment) {
-  if (!present) return "";
-  if (session.phase === "coding" && assignment) return `<div class="bubble code">寫程式</div>`;
-  if (session.phase === "pr" && assignment) return `<div class="bubble prb">PR</div>`;
-  if (assignment) return `<div class="bubble">分派</div>`;
-  return `<div class="bubble idle">…</div>`;
+function publishOffice(events) {
+  if (events.length === 0) return;
+  fetch("/api/pixel-office/events", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ events }),
+  }).catch(() => {});
 }
 
 function render() {
-  floor.classList.toggle("coding", session.phase === "coding");
-  floor.replaceChildren();
-  for (const [className, style] of [
-    ["prop plant", ""],
-    ["prop couch", ""],
-    ["prop rug", ""],
-  ]) {
-    const prop = document.createElement("div");
-    prop.className = className;
-    if (style) prop.setAttribute("style", style);
-    floor.append(prop);
-  }
-  for (const role of SEATS) {
-    const present = session.present.includes(role);
-    const assignment = session.assignments.find((item) => item.role === role);
-    const copy = ROLE_COPY[role];
-    const [left, top] = LAYOUT[role];
-    const desk = document.createElement("article");
-    const state = !present ? " empty" : session.phase === "coding" && assignment ? " working" : session.phase === "pr" && assignment ? " done" : "";
-    desk.className = `desk${state}`;
-    desk.style.left = left;
-    desk.style.top = top;
-    const who = names[role] ? esc(names[role]) : present ? "在席" : "空位";
-    desk.innerHTML = `
-      ${bubbleFor(present, assignment)}
-      <div class="cubicle">
-        <div class="monitor"><i></i></div>
-        <div class="desktop"></div>
-      </div>
-      <div class="chair"></div>
-      ${present ? `<div class="sprite" style="--hair:${copy.hair};--shirt:${copy.shirt}"><i class="hair"></i><i class="face"></i><i class="torso"></i><i class="legs"></i></div>` : ""}
-      <div class="plate"><b>${esc(role)}</b><span>${who}</span></div>`;
-    floor.append(desk);
-  }
+  const events = eventsForTransition(previous, session);
+  previous = structuredClone(session);
+  publishOffice(events);
 
   log.replaceChildren();
   for (const message of session.messages) {
@@ -183,10 +120,9 @@ async function choose(candidateId) {
   }
   const hired = hire(session, candidateId, templates);
   session = hired.session;
-  names[pending.role] = candidate.displayName;
   session.messages.push({
     from: "system",
-    text: `Bot profile 已寫入 ${body.file}${body.fallback ? "（家目錄不可寫，改用 fallback）" : ""}。`,
+    text: `Bot profile 已寫入 ${body.file}${body.fallback ? "（家目錄不可寫，改用 fallback）" : ""}。PixelOffice 會讓這位 Role 出現。`,
   });
   render();
 }
@@ -241,7 +177,7 @@ document.querySelector("#composer").prepend(quick);
 
 templates = await loadTemplates();
 const iacResponse = await fetch("/api/iac");
-iac = await iacResponse.json();
+const iac = await iacResponse.json();
 iacNote.textContent = iac.fallback
   ? `IaC store fallback：${iac.dir}。家目錄的 ~/harness-office-iac/bots/ 現在不可寫。`
   : `IaC store：${iac.dir}`;

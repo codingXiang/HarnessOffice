@@ -14,25 +14,33 @@ HarnessOffice is a game-like AI office. Roles such as HR and PM appear in a pixe
 
 ## 跑 Mock mode demo
 
-靜態頁不能把 Bot profile 寫進 IaC store，所以 demo 用一個沒有相依套件的本機 server。它只模擬：不呼叫 Hermes、OpenCode，也不寫 GitHub。
+畫面分兩塊。瀏覽器是 Group Chat（Hire、核准、Mock PR）。像素辦公室是 [PixelOffice](https://github.com/KalebKE/PixelOffice) 的桌面視窗，授權是 Apache-2.0（見 [`vendor/README.md`](vendor/README.md)）。Chat 把 AgentEvent 轉送到同一台機器的 `127.0.0.1:3003`（HTTP）和 `127.0.0.1:9997`（UDP）。不會呼叫 Hermes、OpenCode，也不寫 GitHub。
+
+PixelOffice 沒有 npm 套件。它是 submodule：
+
+```bash
+git submodule update --init --depth 1 vendor/PixelOffice
+```
+
+需要 JDK 17。開兩個行程：
+
+```bash
+./scripts/run-pixel-office.sh
+```
 
 ```bash
 npm start
 ```
 
-同等指令：`node demo/server.mjs`
+`npm start` 就是 `node demo/server.mjs`。Chat 預設聽 `0.0.0.0:4173`。本機打開 http://127.0.0.1:4173 。Tailscale 用這台機器的位址，同一個 port。只給本機：`HOST=127.0.0.1 npm start`。
 
-預設聽 `0.0.0.0:4173`，同一台機器用 http://127.0.0.1:4173 ，Tailscale 用這台機器的位址。只給本機：`HOST=127.0.0.1 npm start`
+PixelOffice 的事件 port 留在 loopback，因為轉送的是本機的 demo server，不是瀏覽器。對應是：Hire 讓角色出現（`upsert`），HR 在等人選 Candidate 時是 `waiting`，寫程式動畫是 `coding`，Mock PR 是 `success`。
 
-預設把 Hire 的 Bot profile 寫到 `~/harness-office-iac/bots/`。那個目錄不可寫時，改寫到專案裡的 `./.iac-bots/`（已在 `.gitignore`，不要提交）。頁尾會寫出實際路徑。要指定目錄：
-
-```bash
-HARNESS_IAC_BOTS=/你的/bots npm start
-```
+Bot profile 仍寫到 `~/harness-office-iac/bots/`。那個目錄不可寫時，改寫 `./.iac-bots/`（已在 `.gitignore`）。指定目錄：`HARNESS_IAC_BOTS=/你的/bots npm start`。
 
 行為測試：`npm test`
 
-建議走一遍：開場只有 HR → `@HR PM` 再按 Hire → 同樣 Hire Tech Lead、FE、BE → `@PM 做一個像素 Office` → 核准 Issue → `@Tech Lead 分派` → 播放寫程式動畫。動畫結束是一張沒有送出的 Mock PR。
+建議走一遍：PixelOffice 裡先看到 HR → 在 chat `@HR PM` 再按 Hire → 同樣 Hire Tech Lead、FE、BE → `@PM 做一個像素 Office` → 核准 Issue → `@Tech Lead 分派` → 播放寫程式動畫。動畫結束是一張沒有送出的 Mock PR，FE 與 BE 在 PixelOffice 裡變成 success。
 
 Skills 以可編輯複本裝在 [`.agents/skills/`](.agents/skills/)（Cursor 的 installer 路徑；清單在 [`skills-lock.json`](skills-lock.json)）。一次性設定寫在 [`AGENTS.md`](AGENTS.md)：
 

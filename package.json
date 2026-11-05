@@ -4,6 +4,6 @@
   "type": "module",
   "scripts": {
     "start": "node demo/server.mjs",
-    "test": "node --test demo/office.test.mjs demo/iac.test.mjs demo/server.test.mjs"
+    "test": "node --test demo/office.test.mjs demo/iac.test.mjs demo/pixel-office-events.test.mjs demo/server.test.mjs"
   }
 }

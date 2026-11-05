@@ -61,3 +61,53 @@ test("demo serves the office and writes a hired Bot profile from the template", 
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test("pixel office events are forwarded and bad payloads are refused", async () => {
+  const seen = [];
+  const server = createServer({
+    root,
+    iac: { dir: fs.mkdtempSync(path.join(os.tmpdir(), "ho-iac-")), fallback: false },
+    pixelOffice: {
+      async send(event) {
+        seen.push(event);
+        return { httpOk: true, udpOk: true };
+      },
+      close() {},
+    },
+  });
+  const port = await listen(server);
+  try {
+    const ok = await fetch(`http://127.0.0.1:${port}/api/pixel-office/events`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        events: [{
+          version: 1,
+          provider: "harness-office",
+          sessionId: "mock-office",
+          agentId: "hr",
+          projectId: "harness-office",
+          projectLabel: "HarnessOffice",
+          kind: "upsert",
+          state: "idle",
+          activity: "present",
+          occurredAt: 1,
+        }],
+      }),
+    });
+    assert.equal(ok.status, 200);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].state, "idle");
+
+    const bad = await fetch(`http://127.0.0.1:${port}/api/pixel-office/events`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ events: [{ version: 1, kind: "upsert", state: "coding" }] }),
+    });
+    const body = await bad.json();
+    assert.equal(body.results[0].ok, false);
+    assert.equal(seen.length, 1);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
