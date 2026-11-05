@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { createServer } from "./server.mjs";
+import { createServer, demoBind } from "./server.mjs";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 
@@ -13,6 +13,12 @@ function listen(server) {
     server.listen(0, "127.0.0.1", () => resolve(server.address().port));
   });
 }
+
+test("demo listens on 0.0.0.0 unless HOST is set", () => {
+  assert.equal(demoBind({}).host, "0.0.0.0");
+  assert.equal(demoBind({ PORT: "4173" }).port, 4173);
+  assert.equal(demoBind({ HOST: "127.0.0.1" }).host, "127.0.0.1");
+});
 
 test("demo serves the office and writes a hired Bot profile from the template", async () => {
   const iacDir = fs.mkdtempSync(path.join(os.tmpdir(), "ho-iac-"));

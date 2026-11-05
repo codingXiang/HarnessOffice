@@ -47,26 +47,69 @@ async function loadTemplates() {
   return loaded;
 }
 
+const LAYOUT = {
+  HR: ["6%", "6%"],
+  PM: ["36%", "6%"],
+  "Tech Lead": ["66%", "6%"],
+  FE: ["6%", "52%"],
+  BE: ["36%", "52%"],
+  QA: ["66%", "52%"],
+};
+
+const names = {};
+
+function esc(value) {
+  return String(value).replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[char]));
+}
+
+function bubbleFor(present, assignment) {
+  if (!present) return "";
+  if (session.phase === "coding" && assignment) return `<div class="bubble code">寫程式</div>`;
+  if (session.phase === "pr" && assignment) return `<div class="bubble prb">PR</div>`;
+  if (assignment) return `<div class="bubble">分派</div>`;
+  return `<div class="bubble idle">…</div>`;
+}
+
 function render() {
   floor.classList.toggle("coding", session.phase === "coding");
   floor.replaceChildren();
+  for (const [className, style] of [
+    ["prop plant", ""],
+    ["prop couch", ""],
+    ["prop rug", ""],
+  ]) {
+    const prop = document.createElement("div");
+    prop.className = className;
+    if (style) prop.setAttribute("style", style);
+    floor.append(prop);
+  }
   for (const role of SEATS) {
     const present = session.present.includes(role);
     const assignment = session.assignments.find((item) => item.role === role);
-    const seat = document.createElement("article");
-    seat.className = `seat${present ? "" : " empty"}${assignment && session.phase === "coding" ? " working" : ""}`;
     const copy = ROLE_COPY[role];
-    const status = !present ? "空位" : session.phase === "coding" && assignment ? "寫程式中" : assignment ? `分派：${assignment.task}` : "在席";
-    seat.innerHTML = `
-      <div class="sprite" style="--shirt:${copy.shirt};--hair:${copy.hair}">
-        ${present ? '<i class="hair"></i><i class="head"></i><i class="body"></i><i class="legs"></i>' : ""}
+    const [left, top] = LAYOUT[role];
+    const desk = document.createElement("article");
+    const state = !present ? " empty" : session.phase === "coding" && assignment ? " working" : session.phase === "pr" && assignment ? " done" : "";
+    desk.className = `desk${state}`;
+    desk.style.left = left;
+    desk.style.top = top;
+    const who = names[role] ? esc(names[role]) : present ? "在席" : "空位";
+    desk.innerHTML = `
+      ${bubbleFor(present, assignment)}
+      <div class="cubicle">
+        <div class="monitor"><i></i></div>
+        <div class="desktop"></div>
       </div>
-      <div>
-        <h3>${role}</h3>
-        <p>${present ? copy.task : "尚未 Hire"}</p>
-        <p class="status">${status}</p>
-      </div>`;
-    floor.append(seat);
+      <div class="chair"></div>
+      ${present ? `<div class="sprite" style="--hair:${copy.hair};--shirt:${copy.shirt}"><i class="hair"></i><i class="face"></i><i class="torso"></i><i class="legs"></i></div>` : ""}
+      <div class="plate"><b>${esc(role)}</b><span>${who}</span></div>`;
+    floor.append(desk);
   }
 
   log.replaceChildren();
@@ -140,6 +183,7 @@ async function choose(candidateId) {
   }
   const hired = hire(session, candidateId, templates);
   session = hired.session;
+  names[pending.role] = candidate.displayName;
   session.messages.push({
     from: "system",
     text: `Bot profile 已寫入 ${body.file}${body.fallback ? "（家目錄不可寫，改用 fallback）" : ""}。`,

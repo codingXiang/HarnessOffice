@@ -14,6 +14,13 @@ const MIME = {
   ".svg": "image/svg+xml",
 };
 
+export function demoBind(env = process.env) {
+  return {
+    host: env.HOST ?? "0.0.0.0",
+    port: Number(env.PORT ?? 4173),
+  };
+}
+
 export function loadTemplates(dir) {
   const templates = {};
   for (const file of fs.readdirSync(dir)) {
@@ -125,10 +132,10 @@ export function createServer({ root = demoRoot, iac = resolveIacDir({ cwd: root 
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const iac = resolveIacDir({ cwd: demoRoot });
-  const port = Number(process.env.PORT ?? 4173);
+  const { host, port } = demoBind();
   const server = createServer({ iac });
-  server.listen(port, "127.0.0.1", () => {
-    console.log(`HarnessOffice demo (Mock mode) http://127.0.0.1:${port}`);
+  server.listen(port, host, () => {
+    console.log(`HarnessOffice demo (Mock mode) http://${host}:${port}`);
     console.log(`IaC store: ${iac.dir}${iac.fallback ? " (fallback)" : ""}`);
   });
 }
