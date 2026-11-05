@@ -1,0 +1,8 @@
+{
+  "role": "PM",
+  "runtime": "hermes",
+  "displayName": null,
+  "openCode": false,
+  "groupChat": "shared",
+  "responsibilities": ["把需求收成帶驗收條件的 Issue", "人核准之前不開始寫程式"]
+}

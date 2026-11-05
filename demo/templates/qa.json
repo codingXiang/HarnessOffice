@@ -1,0 +1,8 @@
+{
+  "role": "QA",
+  "runtime": "hermes",
+  "displayName": null,
+  "openCode": false,
+  "groupChat": "shared",
+  "responsibilities": ["負責品質"]
+}

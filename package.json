@@ -1,0 +1,9 @@
+{
+  "name": "harness-office-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node demo/server.mjs",
+    "test": "node --test demo/office.test.mjs demo/iac.test.mjs demo/server.test.mjs"
+  }
+}

@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HarnessOffice · Mock mode</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div>
+        <p class="eyebrow">Mock mode</p>
+        <h1>HarnessOffice</h1>
+      </div>
+      <p class="banner">
+        這是展示。不會呼叫 Hermes、OpenCode，也不會寫入 GitHub。每一個在場的 Role 都是 Hermes Bot。
+      </p>
+    </header>
+    <main>
+      <section class="office" aria-label="Office">
+        <div class="section-title">
+          <h2>Office</h2>
+          <p>像素工作場所。開場只有 HR。</p>
+        </div>
+        <div id="floor" class="floor"></div>
+      </section>
+      <section class="chat" aria-label="Group Chat">
+        <div class="section-title">
+          <h2>群組對話</h2>
+          <p>Shared chat。一個 Project 只有這一間，用 @Role 找人。</p>
+        </div>
+        <ol id="log" class="log"></ol>
+        <div id="issue" class="issue" hidden></div>
+        <div id="candidates" class="candidates"></div>
+        <div id="pr" class="pr" hidden></div>
+        <form id="composer">
+          <label for="draft">對 Group Chat 說話</label>
+          <textarea id="draft" rows="2" placeholder="@HR PM"></textarea>
+          <div class="actions">
+            <button type="submit">送出</button>
+            <button type="button" id="approve" disabled>核准 Issue</button>
+            <button type="button" id="hold" disabled>先不要</button>
+            <button type="button" id="animate" disabled>播放寫程式動畫</button>
+          </div>
+        </form>
+      </section>
+    </main>
+    <footer id="iac">正在確認 IaC store…</footer>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

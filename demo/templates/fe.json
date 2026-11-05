@@ -1,0 +1,8 @@
+{
+  "role": "FE",
+  "runtime": "hermes",
+  "displayName": null,
+  "openCode": false,
+  "groupChat": "shared",
+  "responsibilities": ["負責畫面"]
+}
