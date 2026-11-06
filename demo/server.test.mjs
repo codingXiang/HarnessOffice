@@ -129,6 +129,11 @@ test("the chat page offers Hermes settings in zh-TW and empty settings stay Mock
   try {
     const page = await fetch(`http://127.0.0.1:${port}/`);
     const html = await page.text();
+    assert.match(html, /Enter 送出/);
+    assert.match(html, /id="send-status"/);
+    const script = await (await fetch(`http://127.0.0.1:${port}/app.js`)).text();
+    assert.match(script, /event\.key !== "Enter"/);
+    assert.match(script, /沒有送到伺服器。文字還在。/);
     assert.match(html, /Hermes 設定/);
     assert.match(html, /Mock mode：尚未設定 Hermes/);
     assert.match(html, /清空並回到 Mock mode/);
@@ -144,6 +149,17 @@ test("the chat page offers Hermes settings in zh-TW and empty settings stay Mock
     assert.equal(body.reason, "unconfigured");
     assert.equal(body.profile.createdBy, "mock-hermes");
     assert.equal(calls.length, 0);
+
+    const said = await fetch(`http://127.0.0.1:${port}/api/session/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "你好" }),
+    });
+    const saidBody = await said.json();
+    assert.equal(said.status, 200);
+    assert.equal(saidBody.office.messages.at(-2).from, "human");
+    assert.equal(saidBody.office.messages.at(-2).text, "你好");
+    assert.match(saidBody.office.messages.at(-1).text, /請用 @Role/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

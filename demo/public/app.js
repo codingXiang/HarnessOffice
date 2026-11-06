@@ -143,12 +143,40 @@ async function play() {
   render();
 }
 
+const sendStatus = document.querySelector("#send-status");
+
+function setSendStatus(text) {
+  if (sendStatus) sendStatus.textContent = text;
+}
+
+draft.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+  event.preventDefault();
+  event.currentTarget.form?.requestSubmit();
+});
+
 document.querySelector("#composer").addEventListener("submit", async (event) => {
   event.preventDefault();
   const text = draft.value.trim();
   if (!text) return;
+  const previous = draft.value;
   draft.value = "";
-  await postJson("/api/session/messages", { text, clientMessageId: `c${Date.now()}-${Math.random().toString(16).slice(2)}` });
+  setSendStatus("送出中…");
+  try {
+    const { response, payload } = await postJson("/api/session/messages", {
+      text,
+      clientMessageId: `c${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    });
+    if (!response.ok || !payload?.office) {
+      draft.value = previous;
+      setSendStatus(`沒有送出（HTTP ${response.status}）。文字還在。`);
+      return;
+    }
+    setSendStatus("");
+  } catch {
+    draft.value = previous;
+    setSendStatus("沒有送到伺服器。文字還在。");
+  }
 });
 
 approve.addEventListener("click", () => {

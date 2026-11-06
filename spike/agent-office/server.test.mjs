@@ -164,6 +164,54 @@ test("a hired role with no reply of their own is still seated, and a later hire 
   }
 });
 
+test("typing in the 3D chat is forwarded to Group Chat, and a failure is a visible toast", async () => {
+  const calls = [];
+  const forwarded = createSpikeServer({
+    clientDist: null,
+    chatUrl: "http://chat.example",
+    chatFetch: async (url, init) => {
+      calls.push({ url: String(url), method: init?.method, body: init?.body });
+      if (String(url).endsWith("/api/session/messages")) {
+        return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        revision: 1,
+        lines: [{ id: "m-hint", role: "系統", text: "請用 @Role 指定一位已經在 Office 裡的 Hermes Bot。", activity: "idle" }],
+        roles: [],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  const port = await listen(forwarded);
+  const client = connect(port);
+  try {
+    await client.opened;
+    client.ws.send(JSON.stringify({ t: "chat", text: "你好" }));
+    const line = await until(client.messages, (message) => message.t === "chat" && message.text.includes("請用 @Role"));
+    assert.equal(line.text.includes("請用 @Role"), true);
+    assert.equal(calls.some((call) => call.url === "http://chat.example/api/session/messages" && call.body.includes("你好")), true);
+    const dropped = createSpikeServer({
+      clientDist: null,
+      chatFetch: async () => {
+        throw new Error("should not call");
+      },
+    });
+    const droppedPort = await listen(dropped);
+    const other = connect(droppedPort);
+    try {
+      await other.opened;
+      other.ws.send(JSON.stringify({ t: "chat", text: "沒有送出" }));
+      const toast = await until(other.messages, (message) => message.t === "toast");
+      assert.match(toast.text, /沒有送出/);
+    } finally {
+      other.ws.terminate();
+      await close(dropped);
+    }
+  } finally {
+    client.ws.terminate();
+    await close(forwarded);
+  }
+});
+
 test("spike listens on 0.0.0.0 unless HOST is set", () => {
   assert.equal(spikeBind({}).host, "0.0.0.0");
   assert.equal(spikeBind({}).port, 4600);

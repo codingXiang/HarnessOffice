@@ -117,7 +117,12 @@ function listenPort(server) {
   return address && typeof address === "object" ? address.port : 4600;
 }
 
-export function createSpikeServer({ clientDist = defaultClientDist, office = createOffice(), chatUrl = null } = {}) {
+export function createSpikeServer({
+  clientDist = defaultClientDist,
+  office = createOffice(),
+  chatUrl = null,
+  chatFetch = globalThis.fetch,
+} = {}) {
   const peers = new Map();
   const sockets = new Set();
   let seq = 0;
@@ -128,6 +133,30 @@ export function createSpikeServer({ clientDist = defaultClientDist, office = cre
 
   function broadcast(msg, except) {
     for (const ws of sockets) if (ws !== except) send(ws, msg);
+  }
+
+  async function deliverSpectatorChat(ws, base, text) {
+    try {
+      const posted = await chatFetch(`${base}/api/session/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+        signal: AbortSignal.timeout(180000),
+      });
+      if (!posted.ok) {
+        send(ws, { t: "toast", text: "Group Chat 沒有收下這則。請改在 4173 送出。", level: "warn" });
+        return;
+      }
+      const visual = await chatFetch(`${base}/api/session/visual`, { signal: AbortSignal.timeout(4000) });
+      if (!visual.ok) {
+        send(ws, { t: "toast", text: "已送到 4173 的 Group Chat。這頁沒有刷到新內容。", level: "info" });
+        return;
+      }
+      const applied = office.applySession(await visual.json());
+      for (const item of applied.messages) broadcast(item);
+    } catch {
+      send(ws, { t: "toast", text: "送不到 Group Chat。這則沒有進對話。", level: "warn" });
+    }
   }
 
   const server = http.createServer(async (req, res) => {
@@ -287,6 +316,17 @@ export function createSpikeServer({ clientDist = defaultClientDist, office = cre
           if (msg.floor && msg.floor !== FLOOR_ID) {
             send(ws, { t: "toast", text: "This spike has one floor.", level: "info" });
           }
+          return;
+        }
+        if (msg.t === "chat") {
+          const text = typeof msg.text === "string" ? msg.text.trim().slice(0, 500) : "";
+          if (!text) return;
+          const base = typeof chatUrl === "string" ? chatUrl.replace(/\/$/, "") : "";
+          if (!base) {
+            send(ws, { t: "toast", text: "這個 3D 頁沒有接到 Group Chat。這則沒有送出。", level: "warn" });
+            return;
+          }
+          void deliverSpectatorChat(ws, base, text);
           return;
         }
         if (msg.t === "worker.spawn" || msg.t === "worker.prompt" || msg.t === "worker.pr") {

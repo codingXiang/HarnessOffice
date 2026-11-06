@@ -289,6 +289,8 @@ export function createServer({
         const body = await readJson(req);
         const result = await runtime.postMessage({ text: body.text, clientMessageId: body.clientMessageId });
         if (result.profile) writeProfile(iac.dir, result.profile);
+        const lastHuman = [...(result.session?.office?.messages ?? [])].reverse().find((message) => message.from === "human");
+        console.log(`session message ${result.duplicate ? "duplicate" : lastHuman?.id ?? "none"} addressed=${lastHuman?.addressed ?? "none"}`);
         sendJson(res, result.ok ? 200 : result.status ?? 400, result.session ?? { error: "bad-request" });
         return;
       }

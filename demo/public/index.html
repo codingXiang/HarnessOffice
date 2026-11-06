@@ -55,7 +55,7 @@
       <section class="chat" aria-label="Group Chat">
         <div class="section-title">
           <h2>群組對話</h2>
-          <p>Shared chat。一個 Project 只有這一間，用 @Role 找人。Hire 與狀態會送到 PixelOffice。</p>
+          <p>Shared chat。Enter 送出，Shift+Enter 換行。用 @Role 找人，例如 @QA。沒有 @Role 也會留下說明。</p>
         </div>
         <p id="office-link" class="note">Office：在跑 demo 的那台機器打開 PixelOffice（事件 UDP 127.0.0.1:9997、HTTP 127.0.0.1:3003）。</p>
         <ol id="log" class="log"></ol>
@@ -64,7 +64,8 @@
         <div id="pr" class="pr" hidden></div>
         <form id="composer">
           <label for="draft">對 Group Chat 說話</label>
-          <textarea id="draft" rows="2" placeholder="@HR PM"></textarea>
+          <textarea id="draft" rows="2" placeholder="@QA 你好"></textarea>
+          <p id="send-status" class="note" role="status"></p>
           <div class="actions">
             <button type="submit">送出</button>
             <button type="button" id="approve" disabled>核准 Issue</button>
