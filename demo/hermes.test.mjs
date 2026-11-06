@@ -200,7 +200,7 @@ test("a provider failure frame is not a successful reply", async () => {
   assert.match(result.detail, /could not connect to the model/);
 });
 
-test("a loopback dashboard session token is used when the API key is refused", async () => {
+test("a blank dashboard credential does not fetch the dashboard page", async () => {
   const calls = [];
   const result = await hireWithHermes({
     role: "FE",
@@ -209,26 +209,61 @@ test("a loopback dashboard session token is used when the API key is refused", a
     template: fe,
     settings,
     fetchImpl: async (url, init) => {
-      calls.push({ url, session: init.headers?.["x-hermes-session-token"] ?? "" });
+      calls.push({
+        url,
+        method: init.method ?? "GET",
+        authorization: init.headers?.authorization ?? "",
+        session: init.headers?.["x-hermes-session-token"] ?? "",
+      });
       if (url.endsWith("/health") && !url.includes("/p/")) return json(200, { status: "ok" });
       if (url.endsWith("/v1/capabilities")) return json(200, {});
       if (url.includes("/p/__ho_probe__/health")) return json(404, { error: "Unknown or unconfigured profile" });
-      if (url.endsWith("/api/profiles") && !init.headers?.["x-hermes-session-token"]) return json(401, { detail: "Unauthorized" });
-      if (url === "https://hermes.example/" || url === "https://hermes.example") {
-        return new Response('window.__HERMES_SESSION_TOKEN__="dash-session-token";', { status: 200, headers: { "content-type": "text/html" } });
+      if (url.endsWith("/api/profiles")) return json(401, { detail: "Unauthorized" });
+      throw new Error(`unexpected ${init.method ?? "GET"} ${url}`);
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "auth");
+  assert.match(result.detail, /Dashboard 憑證/);
+  assert.equal(calls.some((call) => call.method === "GET" && (call.url === "https://hermes.example/" || call.url === "https://hermes.example")), false);
+  const profile = calls.find((call) => call.url.endsWith("/api/profiles"));
+  assert.equal(profile.method, "POST");
+  assert.equal(profile.authorization, "");
+  assert.equal(profile.session, "");
+  assert.equal(calls.filter((call) => call.url.endsWith("/api/profiles")).length, 1);
+});
+
+test("an explicit dashboard credential is sent on its own and is not the API key", async () => {
+  const calls = [];
+  const result = await hireWithHermes({
+    role: "FE",
+    candidateId: "fe-wu",
+    displayName: "吳像素",
+    template: fe,
+    settings: { ...settings, dashboardToken: "dash-explicit" },
+    fetchImpl: async (url, init) => {
+      calls.push({
+        url,
+        authorization: init.headers?.authorization ?? "",
+        session: init.headers?.["x-hermes-session-token"] ?? "",
+      });
+      if (url.endsWith("/health") && !url.includes("/p/")) return json(200, { status: "ok" });
+      if (url.endsWith("/v1/capabilities")) {
+        assert.equal(init.headers.authorization, "Bearer desk-token");
+        return json(200, {});
       }
+      if (url.includes("/p/__ho_probe__/health")) return json(404, { error: "Unknown or unconfigured profile" });
       if (url.endsWith("/api/profiles")) return json(201, { ok: true, name: "fe-wu" });
       if (url.endsWith("/api/sessions")) return json(201, { object: "hermes.session" });
       throw new Error(url);
     },
   });
   assert.equal(result.ok, true);
-  assert.equal(result.profile.hermes.sessionId, "ho-fe-wu");
-  const profilePosts = calls.filter((call) => call.url.endsWith("/api/profiles"));
-  assert.equal(profilePosts[0].session, "");
-  assert.equal(profilePosts[1].session, "dash-session-token");
-  assert.equal(JSON.stringify(result.profile).includes("dash-session-token"), false);
-  assert.equal(JSON.stringify(result.profile).includes("desk-token"), false);
+  const profile = calls.find((call) => call.url.endsWith("/api/profiles"));
+  assert.equal(profile.authorization, "Bearer dash-explicit");
+  assert.equal(profile.session, "dash-explicit");
+  assert.equal(profile.authorization.includes("desk-token"), false);
+  assert.equal(JSON.stringify(result.profile).includes("dash-explicit"), false);
 });
 
 test("secrets are redacted before an error is shown", () => {

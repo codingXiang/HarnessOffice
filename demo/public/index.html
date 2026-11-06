@@ -27,8 +27,11 @@
           <label for="hermes-dashboard">Dashboard base（留白表示跟 API base 相同，用來建立 profile）
             <input id="hermes-dashboard" name="dashboardBase" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://hermes.example" />
           </label>
-          <label for="hermes-token">API 憑證（只存在這台機器的設定檔，留白表示不改）
+          <label for="hermes-token">API 憑證（API_SERVER_KEY，只存在這台機器的設定檔，留白表示不改）
             <input id="hermes-token" name="token" type="password" autocomplete="off" />
+          </label>
+          <label for="hermes-dashboard-token">Dashboard 憑證（HERMES_DASHBOARD_SESSION_TOKEN，與 API 憑證分開，留白表示不改）
+            <input id="hermes-dashboard-token" name="dashboardToken" type="password" autocomplete="off" />
           </label>
           <label for="hermes-clone-from">Bot：從哪個 profile 複製（clone from）
             <input id="hermes-clone-from" name="cloneFrom" type="text" autocomplete="off" />

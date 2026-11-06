@@ -145,7 +145,7 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings, onChan
     });
     if (!outcome.ok) {
       const text = outcome.reason === "auth"
-        ? "Hermes 拒絕了憑證。這次沒有 Hire，也沒有改用 Mock 成功。"
+        ? redactSecrets(outcome.detail || "Hermes 拒絕了憑證。這次沒有 Hire，也沒有改用 Mock 成功。", loadSettings())
         : `Hermes 沒有建立 Bot。這次沒有 Hire。${outcome.detail ? ` ${redactSecrets(outcome.detail, loadSettings())}` : ""}`;
       note(text.trim());
       record.runtime = { state: outcome.reason === "auth" ? "auth" : "live" };

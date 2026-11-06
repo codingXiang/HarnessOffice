@@ -20,6 +20,7 @@ const hermesForm = document.querySelector("#hermes-form");
 const hermesEndpoint = document.querySelector("#hermes-endpoint");
 const hermesDashboard = document.querySelector("#hermes-dashboard");
 const hermesToken = document.querySelector("#hermes-token");
+const hermesDashboardToken = document.querySelector("#hermes-dashboard-token");
 const hermesCloneFrom = document.querySelector("#hermes-clone-from");
 const hermesProvider = document.querySelector("#hermes-provider");
 const hermesModel = document.querySelector("#hermes-model");
@@ -181,6 +182,7 @@ function formSettings() {
     apiBase: hermesEndpoint.value.trim(),
     dashboardBase: hermesDashboard.value.trim(),
     token: hermesToken.value,
+    dashboardToken: hermesDashboardToken.value,
     bot: {
       cloneFrom: hermesCloneFrom.value.trim(),
       provider: hermesProvider.value.trim(),
@@ -198,6 +200,7 @@ function fillHermesForm(settings) {
   hermesModel.value = settings.bot?.model ?? "";
   hermesGroupName.value = settings.group?.name ?? "";
   hermesToken.value = "";
+  hermesDashboardToken.value = "";
 }
 
 function showHermesStatus(text) {
@@ -278,6 +281,7 @@ document.querySelector("#hermes-clear").addEventListener("click", async () => {
   hermesEndpoint.value = "";
   hermesDashboard.value = "";
   hermesToken.value = "";
+  hermesDashboardToken.value = "";
   hermesCloneFrom.value = "";
   hermesProvider.value = "";
   hermesModel.value = "";

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isConfigured, probeHermes, hireWithHermes } from "./hermes.mjs";
+import { isConfigured, probeHermes, hireWithHermes, redactSecrets } from "./hermes.mjs";
 import { loadHermesSettings, publicHermesSettings, resolveHermesSettingsFile, saveHermesSettings } from "./hermes-settings.mjs";
 import { resolveIacDir, writeProfile } from "./iac.mjs";
 import { isAgentEvent } from "./pixel-office-events.mjs";
@@ -249,7 +249,7 @@ export function createServer({
           sendJson(res, auth ? 401 : 502, {
             error: auth ? "hermes-auth" : "hermes-rejected",
             message: auth
-              ? "Hermes 拒絕了憑證。這次沒有 Hire，也沒有改用 Mock 成功。"
+              ? redactSecrets(outcome.detail || "Hermes 拒絕了憑證。這次沒有 Hire，也沒有改用 Mock 成功。", settings)
               : "Hermes 有回應，但沒有建立 Bot。這次沒有 Hire。",
             status: outcome.status ?? null,
           });

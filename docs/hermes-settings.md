@@ -35,7 +35,7 @@ POST {apiBase}/p/{profile}/api/sessions                id 固定為 ho-{profile}
 POST {apiBase}/p/{profile}/api/sessions/{id}/chat/stream
 ```
 
-`/health` 不需憑證，用來分出「連不上」。`/v1/capabilities` 回 401/403 是 API server 憑證錯誤。Dashboard 的 `POST /api/profiles` 在 loopback 仍要 `X-Hermes-Session-Token`，那是頁面注入的 session token，不是 `API_SERVER_KEY`。畫面上的 Dashboard 憑證留白時，Hire 會讀一次那個頁面、只用在這次請求、不寫進設定檔。API 憑證不會拿去當 dashboard token。
+`/health` 不需憑證，用來分出「連不上」。`/v1/capabilities` 回 401/403 是 API server 憑證錯誤。`POST /api/profiles` 只用畫面上的 Dashboard 憑證，對應你自己設在 Hermes 的 `HERMES_DASHBOARD_SESSION_TOKEN`（見 Hermes 的 [Web Dashboard](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard)）。留白就不會建立 profile，也不會去讀 dashboard 的 HTML、cookie 或頁面裡的 token。API 憑證不會拿去當 dashboard 憑證。兩把憑證都只寫在設定檔，GET 不回傳。
 
 `/p/<profile>/` 要用該 profile 自己的 `API_SERVER_KEY`。只把 default 的 key 送過去會 401。這次沒有 Hire，也不會改口說 Mock 成功。
 
@@ -76,7 +76,7 @@ multiplex 有開，session 建立成功
 - `GET /health` → 200 `{"status":"ok","platform":"hermes-agent","version":"0.23.0"}`
 - `GET /v1/capabilities` 無憑證 → 401 `gateway_auth_failed`；帶 Bearer → 200，且 `session_chat` / `session_chat_streaming` 為 true
 - `GET /p/__ho_probe__/health` → 404 `Unknown or unconfigured profile`（`gateway.multiplex_profiles: true`）
-- `POST /api/profiles` 無 dashboard session token → 401；用頁面注入的 token → 200，`name` 就是送出的名字。再送一次 → 400，detail 含 `already exists`
+- `POST /api/profiles` 沒有另外設定的 dashboard session token → 401。HarnessOffice 不從頁面取出 token。操作者把 `HERMES_DASHBOARD_SESSION_TOKEN` 填進 Dashboard 憑證之後，同一個名字建立成功是 200，再送一次是 400，detail 含 `already exists`
 - 該 profile 沒有自己的 `API_SERVER_KEY` 時，`POST /p/<profile>/api/sessions` → 401。寫上同一把 key 之後 → 201，session id 就是我們送的 `ho-<profile>`。再送一次 → 409 `session_exists`。`GET` 仍看得到同一筆
 - `POST .../chat/stream` 沒有模型憑證 → HTTP 200 的 SSE，`assistant.completed` 的 `completed` 是 false，接著 `run.failed`。runtime 的 provider 與 model 都是空的。沒有模型回覆
 

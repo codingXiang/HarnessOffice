@@ -111,11 +111,6 @@ function bearer(token) {
   return { authorization: `Bearer ${token}` };
 }
 
-export function dashboardSessionTokenFromHtml(html) {
-  const match = String(html ?? "").match(/__HERMES_SESSION_TOKEN__\s*=\s*(?:"([^"]+)"|'([^']+)')/);
-  return match?.[1] || match?.[2] || "";
-}
-
 function dashboardHeaders(token) {
   if (!token) return { "content-type": "application/json" };
   return {
@@ -221,39 +216,23 @@ export async function hireWithHermes({
   }
 
   const payload = profileCreateBody({ role, candidateId, displayName, template, settings: normalized });
-  const postProfile = (token) => fetchImpl(`${normalized.dashboardBase}/api/profiles`, {
-    method: "POST",
-    headers: dashboardHeaders(token),
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  let dashToken = normalized.dashboardToken;
   let created;
   try {
-    created = await postProfile(dashToken);
+    created = await fetchImpl(`${normalized.dashboardBase}/api/profiles`, {
+      method: "POST",
+      headers: dashboardHeaders(normalized.dashboardToken),
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
   } catch {
     return { ok: true, mode: "mock", reason: "unreachable", profile: localProfile("mock-hermes") };
   }
-  // A loopback `hermes dashboard` rejects the API server key. Its own session
-  // token is injected into the HTML for the page. Use that once, and do not store it.
-  if (created.status === 401 && !normalized.dashboardToken) {
-    try {
-      const page = await fetchImpl(`${normalized.dashboardBase}/`, {
-        method: "GET",
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      const found = dashboardSessionTokenFromHtml(await page.text());
-      if (found) {
-        dashToken = found;
-        created = await postProfile(found);
-      }
-    } catch {
-      // leave the 401
-    }
-  }
   const createdBody = await readBody(created);
   if (created.status === 401 || created.status === 403) {
-    return { ok: false, mode: "live", reason: "auth", status: created.status };
+    const detail = normalized.dashboardToken
+      ? "Dashboard 拒絕了這把憑證。請改填 Hermes 的 HERMES_DASHBOARD_SESSION_TOKEN。API 憑證不會拿去當 dashboard 憑證。"
+      : "請在 Hermes 設定填 Dashboard 憑證（HERMES_DASHBOARD_SESSION_TOKEN）。留白不會讀取 dashboard 頁面。這次沒有 Hire。";
+    return { ok: false, mode: "live", reason: "auth", status: created.status, detail };
   }
   if (!created.ok && !alreadyExists(created.status, createdBody)) {
     return {
