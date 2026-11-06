@@ -149,7 +149,7 @@ export function createOffice() {
           list.map((worker) => {
             const speaker = Object.values(SPEAKERS).find((item) => item.id === worker.id);
             if (!speaker) return null;
-            return [speaker.deskId, { text: worker.name, color: speaker.sign, by: "spike", at: 0 }];
+            return [speaker.deskId, { text: speaker.name, color: speaker.sign, by: "spike", at: 0 }];
           }).filter(Boolean),
         ),
       },
@@ -263,6 +263,44 @@ export function createOffice() {
     }
   }
 
+  const SEATED_NOTE = "已入座。還沒有回覆。";
+
+  function shownName(role, name) {
+    const trimmed = typeof name === "string" ? name.trim().slice(0, 24) : "";
+    return trimmed || role?.name || "";
+  }
+
+  function cardTitle(role, shown) {
+    if (!role) return shown || "Spike";
+    if (!shown || shown === role.name) return role.name;
+    return `${role.name} · ${shown}`;
+  }
+
+  /** Puts a known role at their desk. A role with no line of their own still gets a chair and a card. */
+  function placeWorker(roleName, options) {
+    const role = SPEAKERS[roleName];
+    if (!role) return null;
+    const shown = shownName(role, options.name);
+    const summary = typeof options.text === "string" && options.text.trim() ? options.text.trim().slice(0, 400) : SEATED_NOTE;
+    const title = cardTitle(role, shown);
+    const prev = workers.get(role.id);
+    const worker = workerRecord(role, prev ? phaseOf(prev) : "appear", prev);
+    worker.name = shown || role.name;
+    worker.task = { name: title, summary };
+    worker.activity = summary;
+    if (options.activity) applyActivity(worker, options.activity);
+    const unchanged = Boolean(
+      prev
+      && prev.name === worker.name
+      && prev.deskId === worker.deskId
+      && prev.status === worker.status
+      && prev.task?.name === worker.task.name
+      && prev.task?.summary === worker.task.summary,
+    );
+    workers.set(role.id, worker);
+    return { worker, unchanged };
+  }
+
   /** A Group Chat line. Known roles get it on the card over their head; anyone else is chat-only. */
   function say(roleName, text, options = {}) {
     const line = typeof text === "string" ? text.trim().slice(0, 400) : "";
@@ -271,33 +309,39 @@ export function createOffice() {
     if (messageId && seenLines.has(messageId)) return { duplicate: true, messages: [] };
     if (messageId) seenLines.add(messageId);
     const role = SPEAKERS[roleName];
-    const shown = typeof options.name === "string" && options.name.trim() ? options.name.trim().slice(0, 24) : role?.name;
+    const shown = shownName(role, options.name);
     const chat = chatLine(role, line);
     if (shown) chat.name = shown;
     transcript.push({
       from: role?.id ?? "spike",
-      name: shown ?? String(roleName || "Spike").slice(0, 24),
+      name: shown || String(roleName || "Spike").slice(0, 24),
       color: role?.color ?? "#ffd166",
       text: line,
       at: chat.at,
     });
-    if (!role) return { worker: null, messages: [{ ...chat, name: String(roleName || "Spike").slice(0, 24) }] };
-    const prev = workers.get(role.id);
-    const worker = workerRecord(role, prev ? phaseOf(prev) : "appear", prev);
-    if (shown) worker.name = shown;
-    worker.task = { name: shown || role.name, summary: line };
-    worker.activity = line;
-    if (options.activity) applyActivity(worker, options.activity);
-    workers.set(role.id, worker);
-    return { worker, messages: [{ t: "worker.update", worker }, chat] };
+    if (!role) return { worker: null, messages: [{ ...chat, name: shown || String(roleName || "Spike").slice(0, 24) }] };
+    const placed = placeWorker(roleName, { name: shown, text: line, activity: options.activity });
+    return { worker: placed.worker, messages: [{ t: "worker.update", worker: placed.worker }, chat] };
   }
 
   function applySession(snapshot) {
     const messages = [];
     const lines = Array.isArray(snapshot?.lines) ? snapshot.lines : [];
+    const spoken = new Set();
     for (const line of lines) {
-      const spoken = say(line.role, line.text, { messageId: line.id, activity: line.activity, name: line.name });
-      if (spoken.messages) messages.push(...spoken.messages);
+      const result = say(line.role, line.text, { messageId: line.id, activity: line.activity, name: line.name });
+      if (result.worker) spoken.add(line.role);
+      if (result.messages) messages.push(...result.messages);
+    }
+    const roles = Array.isArray(snapshot?.roles) ? snapshot.roles : [];
+    for (const role of roles) {
+      if (!role?.role || spoken.has(role.role)) continue;
+      const placed = placeWorker(role.role, { name: role.name, text: role.text, activity: role.activity });
+      if (!placed || placed.unchanged) continue;
+      messages.push({ t: "worker.update", worker: placed.worker });
+    }
+    if (messages.some((message) => message.t === "worker.update")) {
+      messages.push({ t: "plan", plan: floorView().plan });
     }
     return { messages };
   }

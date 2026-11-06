@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { WebSocket } from "ws";
 import { DEMO_STEPS } from "./demo.mjs";
+import { createOffice } from "./office.mjs";
 import { FLOOR_SPAWN, createSpikeServer, spikeBind } from "./server.mjs";
 
 function listen(server) {
@@ -63,6 +64,102 @@ test("a Group Chat snapshot is spoken once and a reconnect does not repeat it", 
     assert.equal(copies.length, 1);
     client.ws.terminate();
   } finally {
+    await close(server);
+  }
+});
+
+test("a hired role with no reply of their own is still seated, and a later hire does not duplicate anyone", async () => {
+  const qaText = "fixture：我是何驗，這句不是上游模型。";
+  const hrText = "fixture：已 Hire 林可 擔任 PM。";
+  const present = {
+    revision: 4,
+    lines: [
+      { id: "m-hr", role: "HR", name: "HR", text: hrText, activity: "idle" },
+      { id: "m-qa", role: "QA", name: "何驗", text: qaText, activity: "idle" },
+    ],
+    roles: [
+      { role: "HR", name: "HR", text: hrText, activity: "idle" },
+      { role: "QA", name: "何驗", text: qaText, activity: "idle" },
+      { role: "PM", name: "林可", text: "", activity: "idle" },
+    ],
+  };
+  const office = createOffice();
+  office.applySession(present);
+  const ids = [...office.workers.values()].map((worker) => worker.id).sort();
+  assert.deepEqual(ids, ["role-hr", "role-pm", "role-qa"]);
+  const pm = office.workers.get("role-pm");
+  assert.equal(pm.deskId, "desk-2");
+  assert.equal(pm.name, "林可");
+  assert.equal(pm.task.name, "PM · 林可");
+  assert.match(pm.task.summary, /還沒有回覆/);
+  const qa = office.workers.get("role-qa");
+  assert.equal(qa.deskId, "desk-6");
+  assert.equal(qa.name, "何驗");
+  assert.equal(qa.task.name, "QA · 何驗");
+  assert.equal(qa.task.summary, qaText);
+  assert.equal(office.welcome("p1", [], 4600).chat.filter((line) => line.text === qaText).length, 1);
+  assert.equal(office.welcome("p1", [], 4600).chat.some((line) => line.text === pm.task.summary), false);
+  assert.equal(office.welcome("p1", [], 4600).plan.labels["desk-2"].text, "PM");
+  assert.equal(office.welcome("p1", [], 4600).plan.labels["desk-6"].text, "QA");
+  const replay = office.applySession(present);
+  assert.equal(replay.messages.length, 0);
+  assert.equal(office.workers.size, 3);
+
+  const growing = createOffice();
+  growing.applySession({
+    revision: 1,
+    lines: [
+      { id: "m-hr", role: "HR", name: "HR", text: hrText, activity: "idle" },
+      { id: "m-qa", role: "QA", name: "何驗", text: qaText, activity: "idle" },
+    ],
+    roles: [
+      { role: "HR", name: "HR", text: hrText, activity: "idle" },
+      { role: "QA", name: "何驗", text: qaText, activity: "idle" },
+    ],
+  });
+  assert.equal(growing.workers.size, 2);
+  const added = growing.applySession(present);
+  assert.equal(added.messages.some((message) => message.t === "worker.update" && message.worker.id === "role-pm"), true);
+  assert.equal(growing.workers.size, 3);
+  assert.equal(new Set([...growing.workers.keys()]).size, 3);
+  assert.equal(growing.applySession(present).messages.length, 0);
+  assert.equal(growing.welcome("p1", [], 4600).chat.filter((line) => line.text === qaText).length, 1);
+
+  const server = createSpikeServer({ clientDist: null });
+  const port = await listen(server);
+  let client;
+  try {
+    const seated = await fetch(`http://127.0.0.1:${port}/api/spike/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(present),
+    });
+    assert.equal(seated.status, 200);
+    await seated.json();
+    client = connect(port);
+    await client.opened;
+    const welcome = await until(client.messages, (message) => message.t === "welcome");
+    assert.deepEqual(welcome.workers.map((worker) => worker.id).slice().sort(), ["role-hr", "role-pm", "role-qa"]);
+    assert.equal(welcome.floors[0].workers, 3);
+    assert.equal(welcome.chat.filter((line) => line.text === qaText).length, 1);
+    const again = await fetch(`http://127.0.0.1:${port}/api/spike/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(present),
+    });
+    assert.equal((await again.json()).applied, 0);
+    client.ws.terminate();
+    const reconnect = connect(port);
+    try {
+      await reconnect.opened;
+      const back = await until(reconnect.messages, (message) => message.t === "welcome");
+      assert.deepEqual(back.workers.map((worker) => worker.id).slice().sort(), ["role-hr", "role-pm", "role-qa"]);
+      assert.equal(back.chat.filter((line) => line.text === qaText).length, 1);
+    } finally {
+      reconnect.ws.terminate();
+    }
+  } finally {
+    client?.ws.terminate();
     await close(server);
   }
 });

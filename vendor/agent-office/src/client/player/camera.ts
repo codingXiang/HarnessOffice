@@ -12,17 +12,18 @@ export const EYE_HEIGHT = 1.4;
 
 /**
  * Spike spectator: one fixed overhead of the north desks, not a follow camera.
- * HR is desk-1 (x −11.6). Hired roles continue through desk-6 (QA, x −0.4), all at z −4.55.
- * The old frame was centered on x −10.5 and left QA outside the picture.
+ * HR is desk-1 (x −11.6), PM is desk-2 (x −9.4), QA is desk-6 (x −0.4), all at z −4.55.
+ * The signs hang at y 3.35 and the speech cards sit over the characters, so the frame
+ * stands far enough south to keep both ends, the signs, and the cards inside a 1280×800 view.
  * Stay under the 6.8 m ceiling. WASD does not move this camera.
  */
 export const SPECTATOR_CAMERA = {
   x: -6,
-  y: 6.2,
-  z: 2.4,
+  y: 6.15,
+  z: 7.6,
   lookX: -6,
-  lookY: 0.9,
-  lookZ: -4.2,
+  lookY: 2.05,
+  lookZ: -4.5,
 } as const;
 
 /** The room the camera keeps to (see PlayerController.room). */

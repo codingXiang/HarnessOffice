@@ -317,6 +317,7 @@ export function visualSnapshot(sessionView) {
     const last = [...lines].reverse().find((line) => line.role === role);
     return {
       role,
+      name: names[role] || role,
       activity: sessionView.activity?.[role] || "idle",
       text: last?.text ?? "",
     };

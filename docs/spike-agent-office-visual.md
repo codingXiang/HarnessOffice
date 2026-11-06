@@ -64,7 +64,7 @@ curl -s -X POST http://127.0.0.1:4600/api/spike/say \
   -d '{"role":"PM","text":"請核准，或先不要。"}'
 ```
 
-`HR`, `PM`, `Tech Lead`, `FE`, `BE`, and `QA` get a desk and a card. Any other `role` is chat-only. The chat server on port 4173 is the authority: it pushes the Group Chat snapshot to `POST /api/spike/session`, and this page pulls `GET /api/session/visual` from `HARNESS_CHAT_URL` when a browser connects. The same message id is not spoken twice. Hermes is not called from this process. The endpoint and bot or group settings stay on the chat page. See [`docs/adr/0003-hermes-settings-come-from-the-ui.md`](adr/0003-hermes-settings-come-from-the-ui.md) and [`docs/hermes-settings.md`](hermes-settings.md).
+`HR`, `PM`, `Tech Lead`, `FE`, `BE`, and `QA` get a desk and a card. A role listed in the session with no line of their own still sits down; the card says they have not replied, and that sentence is not added to the transcript. Any other `role` is chat-only. The card title is the role and the person's name. The hanging sign is the role. The chat server on port 4173 is the authority: it pushes the Group Chat snapshot to `POST /api/spike/session`, and this page pulls `GET /api/session/visual` from `HARNESS_CHAT_URL` when a browser connects. The same message id is not spoken twice. Hermes is not called from this process. The endpoint and bot or group settings stay on the chat page. See [`docs/adr/0003-hermes-settings-come-from-the-ui.md`](adr/0003-hermes-settings-come-from-the-ui.md) and [`docs/hermes-settings.md`](hermes-settings.md).
 
 Same call by hand:
 

@@ -70,6 +70,9 @@ test("a live message is delivered to that bot session and the visual line is the
   runtime.boot(null);
   const hired = await hirePm(runtime);
   assert.equal(hired.profile.hermes.sessionId, "ho-pm-lin");
+  const seated = visualSnapshot(hired.session);
+  assert.equal(seated.roles.find((role) => role.role === "PM").name, "林可");
+  assert.equal(seated.roles.find((role) => role.role === "PM").text, "");
   const replied = await runtime.postMessage({ text: "@PM 做一個像素 Office", clientMessageId: "live-1" });
   const last = replied.session.office.messages.at(-1);
   assert.equal(last.from, "PM");
