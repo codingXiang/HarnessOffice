@@ -25,6 +25,7 @@ function liveFetch(calls, { profileStatus = 201, streamText = "我先把驗收�
     if (url.endsWith("/v1/capabilities")) return json(200, { features: { session_chat_streaming: true } });
     if (url.includes("/p/__ho_probe__/health")) return json(404, { error: "Unknown or unconfigured profile" });
     if (url.endsWith("/api/profiles")) return json(profileStatus, profileStatus === 201 ? { ok: true, name: "pm-lin" } : { detail: "Profile already exists" });
+    if (url.endsWith("/api/env") && init.method === "PUT") return json(200, { ok: true, key: "API_SERVER_KEY" });
     if (url.endsWith("/api/sessions") && init.method === "POST") {
       return json(calls.filter((call) => call.url.endsWith("/api/sessions")).length > 1 ? 409 : 201, { detail: "Session already exists" });
     }
@@ -64,7 +65,7 @@ test("a live message is delivered to that bot session and the visual line is the
   const runtime = createOfficeRuntime({
     templates,
     fetchImpl: liveFetch(calls),
-    loadSettings: () => ({ apiBase: "https://hermes.example", token: "desk-token", group: { name: "HarnessOffice" } }),
+    loadSettings: () => ({ apiBase: "https://hermes.example", token: "desk-token", dashboardToken: "dash-explicit", group: { name: "HarnessOffice" } }),
   });
   runtime.boot(null);
   const hired = await hirePm(runtime);
@@ -75,7 +76,17 @@ test("a live message is delivered to that bot session and the visual line is the
   assert.equal(last.text, "我先把驗收條件列出來。");
   const shot = visualSnapshot(replied.session);
   assert.equal(shot.lines.at(-1).text, "我先把驗收條件列出來。");
+  assert.equal(shot.lines.at(-1).name, "林可");
   assert.equal(shot.roles.find((role) => role.role === "PM").text, "我先把驗收條件列出來。");
+  const envWrite = calls.find((call) => call.url.endsWith("/api/env") && call.method === "PUT");
+  const sessionOpen = calls.find((call) => call.url.endsWith("/api/sessions") && call.method === "POST");
+  assert.ok(envWrite && sessionOpen);
+  assert.ok(calls.indexOf(envWrite) < calls.indexOf(sessionOpen));
+  const envBody = JSON.parse(envWrite.body);
+  assert.equal(envBody.key, "API_SERVER_KEY");
+  assert.equal(envBody.profile, "pm-lin");
+  assert.equal(envBody.value, "desk-token");
+  assert.equal(JSON.stringify(replied.session).includes("desk-token"), false);
   const stream = calls.filter((call) => call.url.endsWith("/chat/stream"));
   assert.equal(stream.length, 1);
   assert.equal(stream[0].url, "https://hermes.example/p/pm-lin/api/sessions/ho-pm-lin/chat/stream");
@@ -85,7 +96,7 @@ test("a live message is delivered to that bot session and the visual line is the
   const restarted = createOfficeRuntime({
     templates,
     fetchImpl: liveFetch(againCalls, { profileStatus: 400, streamText: "第二則只出現一次。" }),
-    loadSettings: () => ({ apiBase: "https://hermes.example", token: "desk-token", group: { name: "HarnessOffice" } }),
+    loadSettings: () => ({ apiBase: "https://hermes.example", token: "desk-token", dashboardToken: "dash-explicit", group: { name: "HarnessOffice" } }),
   });
   restarted.boot(saved);
   await restarted.postMessage({ text: "@PM 再補一條驗收", clientMessageId: "live-2" });
@@ -103,9 +114,10 @@ test("when multiplex is off, the hired Bot does not get a Mock script reply", as
       if (url.endsWith("/v1/capabilities")) return json(200, {});
       if (url.includes("/p/__ho_probe__/health")) return json(200, { status: "ok" });
       if (url.endsWith("/api/profiles")) return json(201, { ok: true, name: "pm-lin" });
+      if (url.endsWith("/api/env")) return json(200, { ok: true, key: "API_SERVER_KEY" });
       throw new Error(url);
     },
-    loadSettings: () => ({ apiBase: "https://hermes.example", token: "desk-token" }),
+    loadSettings: () => ({ apiBase: "https://hermes.example", token: "desk-token", dashboardToken: "dash-explicit" }),
   });
   runtime.boot(null);
   const hired = await hirePm(runtime);
@@ -120,7 +132,7 @@ test("a pending Hermes turn is marked interrupted after restart and is not resen
   const runtime = createOfficeRuntime({
     templates,
     fetchImpl: liveFetch(calls),
-    loadSettings: () => ({ apiBase: "https://hermes.example", token: "desk-token" }),
+    loadSettings: () => ({ apiBase: "https://hermes.example", token: "desk-token", dashboardToken: "dash-explicit" }),
   });
   runtime.boot(null);
   await hirePm(runtime);
@@ -131,7 +143,7 @@ test("a pending Hermes turn is marked interrupted after restart and is not resen
     fetchImpl: async () => {
       throw new Error("should not call");
     },
-    loadSettings: () => ({ apiBase: "https://hermes.example", token: "desk-token" }),
+    loadSettings: () => ({ apiBase: "https://hermes.example", token: "desk-token", dashboardToken: "dash-explicit" }),
   });
   const view = restarted.boot(saved);
   assert.match(view.office.messages.at(-1).text, /沒有自動重送/);
@@ -150,6 +162,7 @@ test("cancelling a live turn does not keep a successful reply", async () => {
       if (url.endsWith("/v1/capabilities")) return json(200, {});
       if (url.includes("/p/__ho_probe__/health")) return json(404, { error: "Unknown or unconfigured profile" });
       if (url.endsWith("/api/profiles")) return json(201, { ok: true, name: "pm-lin" });
+      if (url.endsWith("/api/env")) return json(200, { ok: true, key: "API_SERVER_KEY" });
       if (url.endsWith("/api/sessions")) return json(201, {});
       if (url.endsWith("/chat/stream")) {
         return new Promise((_resolve, reject) => {
@@ -163,7 +176,7 @@ test("cancelling a live turn does not keep a successful reply", async () => {
       }
       throw new Error(url);
     },
-    loadSettings: () => ({ apiBase: "https://hermes.example", token: "desk-token" }),
+    loadSettings: () => ({ apiBase: "https://hermes.example", token: "desk-token", dashboardToken: "dash-explicit" }),
   });
   runtime.boot(null);
   await hirePm(runtime);

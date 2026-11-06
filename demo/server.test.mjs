@@ -171,6 +171,9 @@ test("configured Hire posts to Hermes, then writes the Bot profile", async () =>
       if (url.endsWith("/api/profiles")) {
         return new Response(JSON.stringify({ ok: true, name: "fe-wu" }), { status: 201, headers: { "content-type": "application/json" } });
       }
+      if (url.endsWith("/api/env") && init.method === "PUT") {
+        return new Response(JSON.stringify({ ok: true, key: "API_SERVER_KEY" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
       if (url.endsWith("/api/sessions")) {
         return new Response(JSON.stringify({ object: "hermes.session" }), { status: 201, headers: { "content-type": "application/json" } });
       }
@@ -185,6 +188,7 @@ test("configured Hire posts to Hermes, then writes the Bot profile", async () =>
       body: JSON.stringify({
         apiBase: "https://hermes.example",
         token: "desk-token",
+        dashboardToken: "dash-explicit",
         bot: { cloneFrom: "default", provider: "", model: "local" },
         group: { name: "HarnessOffice" },
       }),

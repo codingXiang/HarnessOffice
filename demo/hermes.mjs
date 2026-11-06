@@ -7,6 +7,7 @@
  *   GET  {apiBase}/v1/capabilities          Bearer API_SERVER_KEY
  *   GET  {apiBase}/p/__ho_probe__/health    404 means multiplex is on; 200 means the prefix is ignored
  *   POST {dashboardBase}/api/profiles       ProfileCreate
+ *   PUT  {dashboardBase}/api/env            {"key":"API_SERVER_KEY","value","profile"}
  *   POST {apiBase}/p/{profile}/api/sessions
  *   POST {apiBase}/p/{profile}/api/sessions/{id}/chat/stream
  *
@@ -182,6 +183,65 @@ export async function probeHermes(settings, fetchImpl, options) {
   };
 }
 
+async function writeProfileApiKey(settings, profileName, fetchImpl, timeoutMs) {
+  if (!settings.dashboardToken) {
+    return {
+      ok: false,
+      status: 401,
+      detail: "請在 Hermes 設定填 Dashboard 憑證（HERMES_DASHBOARD_SESSION_TOKEN），才能把 API_SERVER_KEY 寫進新 profile。留白不會讀取 dashboard 頁面。",
+    };
+  }
+  if (!settings.token) {
+    return {
+      ok: false,
+      status: 401,
+      detail: "請在 Hermes 設定填 API 憑證，才能寫入新 profile 的 API_SERVER_KEY。",
+    };
+  }
+  let response;
+  try {
+    response = await fetchImpl(`${settings.dashboardBase}/api/env`, {
+      method: "PUT",
+      headers: dashboardHeaders(settings.dashboardToken),
+      body: JSON.stringify({ key: "API_SERVER_KEY", value: settings.token, profile: profileName }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch {
+    return { ok: false, status: 0, offline: true };
+  }
+  const parsed = await readBody(response);
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      detail: response.status === 401 || response.status === 403
+        ? "Dashboard 拒絕了這把憑證。沒有寫入 API_SERVER_KEY。"
+        : redactSecrets(parsed.raw, settings),
+    };
+  }
+  return { ok: true, status: response.status };
+}
+
+async function openBotSession(settings, profileName, role, fetchImpl, timeoutMs) {
+  const sessionId = botSessionId(profileName);
+  let session;
+  try {
+    session = await fetchImpl(`${settings.apiBase}/p/${encodeURIComponent(profileName)}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...bearer(settings.token) },
+      body: JSON.stringify({
+        id: sessionId,
+        title: settings.group.name ? `Group: ${settings.group.name}` : `Group: ${role}`,
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch {
+    return { ok: false, offline: true, status: 0, sessionId };
+  }
+  const sessionBody = await readBody(session);
+  return { ok: session.ok || alreadyExists(session.status, sessionBody), status: session.status, sessionId, body: sessionBody };
+}
+
 export async function hireWithHermes({
   settings,
   role,
@@ -189,6 +249,7 @@ export async function hireWithHermes({
   displayName,
   template,
   fetchImpl,
+  ownsProfile = false,
   timeoutMs = 8000,
 }) {
   const normalized = normalizeSettings(settings);
@@ -244,54 +305,83 @@ export async function hireWithHermes({
     };
   }
   const profileName = payload.name;
+  const createdFresh = created.ok;
+  if (!createdFresh && !ownsProfile) {
+    return {
+      ok: false,
+      mode: "live",
+      reason: "conflict",
+      status: created.status,
+      detail: "Hermes 裡已有同名 profile，但不是這個 HarnessOffice 建立的。沒有改它的 API_SERVER_KEY，也沒有 Hire。",
+    };
+  }
+  if (createdFresh) {
+    const keyed = await writeProfileApiKey(normalized, profileName, fetchImpl, timeoutMs);
+    if (!keyed.ok) {
+      return {
+        ok: false,
+        mode: "live",
+        reason: keyed.offline ? "unreachable" : keyed.status === 401 || keyed.status === 403 ? "auth" : "key-provision",
+        status: keyed.status,
+        detail: keyed.detail,
+        ownedProfile: profileName,
+      };
+    }
+  }
   if (inspected.multiplex !== true) {
     return {
       ok: true,
       mode: "live",
       reason: "profile-only",
+      ownedProfile: profileName,
       profile: localProfile("hermes", { name: profileName, sessionId: null, route: "unavailable" }),
     };
   }
 
-  const sessionId = botSessionId(profileName);
-  let session;
-  try {
-    session = await fetchImpl(`${normalized.apiBase}/p/${encodeURIComponent(profileName)}/api/sessions`, {
-      method: "POST",
-      headers: { "content-type": "application/json", ...bearer(normalized.token) },
-      body: JSON.stringify({
-        id: sessionId,
-        title: normalized.group.name ? `Group: ${normalized.group.name}` : `Group: ${role}`,
-      }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-  } catch {
-    return { ok: false, mode: "live", reason: "unreachable", status: 0 };
+  let opened = await openBotSession(normalized, profileName, role, fetchImpl, timeoutMs);
+  if (!createdFresh && (opened.status === 401 || opened.status === 403)) {
+    const keyed = await writeProfileApiKey(normalized, profileName, fetchImpl, timeoutMs);
+    if (!keyed.ok) {
+      return {
+        ok: false,
+        mode: "live",
+        reason: keyed.offline ? "unreachable" : "auth",
+        status: keyed.status,
+        detail: keyed.detail,
+        ownedProfile: profileName,
+      };
+    }
+    opened = await openBotSession(normalized, profileName, role, fetchImpl, timeoutMs);
   }
-  const sessionBody = await readBody(session);
-  if (session.status === 401 || session.status === 403) {
+  if (opened.offline) {
+    return { ok: false, mode: "live", reason: "unreachable", status: 0, ownedProfile: profileName };
+  }
+  if (opened.status === 401 || opened.status === 403) {
     return {
       ok: false,
       mode: "live",
       reason: "auth",
-      status: session.status,
-      detail: "這個 profile 不接受這把 API 憑證。每個 secondary profile 要有自己的 API_SERVER_KEY。",
+      status: opened.status,
+      detail: "這個 profile 不接受這把 API 憑證。寫入 API_SERVER_KEY 之後仍然拒絕。沒有把失敗當成回覆。",
+      ownedProfile: profileName,
     };
   }
-  if (!session.ok && !alreadyExists(session.status, sessionBody)) {
+  if (!opened.ok) {
     return {
       ok: false,
       mode: "live",
       reason: "session-rejected",
-      status: session.status,
-      detail: redactSecrets(sessionBody.raw, normalized),
+      status: opened.status,
+      detail: redactSecrets(opened.body?.raw, normalized),
+      ownedProfile: profileName,
     };
   }
   return {
     ok: true,
     mode: "live",
     reason: "created",
-    profile: localProfile("hermes", { name: profileName, sessionId, route: "multiplex" }),
+    ownedProfile: profileName,
+    profile: localProfile("hermes", { name: profileName, sessionId: opened.sessionId, route: "multiplex" }),
   };
 }
 

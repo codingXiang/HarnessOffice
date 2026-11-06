@@ -145,10 +145,13 @@ export function createOffice() {
       decor: [],
       plan: {
         wing: 0,
-        labels: {
-          "desk-1": { text: "HR", color: ROLES.HR.sign, by: "spike", at: 0 },
-          "desk-2": { text: "PM", color: ROLES.PM.sign, by: "spike", at: 0 },
-        },
+        labels: Object.fromEntries(
+          list.map((worker) => {
+            const speaker = Object.values(SPEAKERS).find((item) => item.id === worker.id);
+            if (!speaker) return null;
+            return [speaker.deskId, { text: worker.name, color: speaker.sign, by: "spike", at: 0 }];
+          }).filter(Boolean),
+        ),
       },
       services: { items: [], port },
       dog: {
@@ -205,7 +208,7 @@ export function createOffice() {
               from: "spike",
               name: "Spike",
               color: "#ffd166",
-              text: "Spectator view of desk 1 (HR) and desk 2 (PM). Press U to walk, or open ?view=first. Lines here come from the Group Chat on port 4173.",
+              text: "Spectator view of the north desks, HR through QA. Press U to walk, or open ?view=first. Lines here come from the Group Chat on port 4173.",
               at: Date.now(),
             },
           ],
@@ -268,10 +271,12 @@ export function createOffice() {
     if (messageId && seenLines.has(messageId)) return { duplicate: true, messages: [] };
     if (messageId) seenLines.add(messageId);
     const role = SPEAKERS[roleName];
+    const shown = typeof options.name === "string" && options.name.trim() ? options.name.trim().slice(0, 24) : role?.name;
     const chat = chatLine(role, line);
+    if (shown) chat.name = shown;
     transcript.push({
       from: role?.id ?? "spike",
-      name: role?.name ?? String(roleName || "Spike").slice(0, 24),
+      name: shown ?? String(roleName || "Spike").slice(0, 24),
       color: role?.color ?? "#ffd166",
       text: line,
       at: chat.at,
@@ -279,7 +284,8 @@ export function createOffice() {
     if (!role) return { worker: null, messages: [{ ...chat, name: String(roleName || "Spike").slice(0, 24) }] };
     const prev = workers.get(role.id);
     const worker = workerRecord(role, prev ? phaseOf(prev) : "appear", prev);
-    worker.task = { name: role.name, summary: line };
+    if (shown) worker.name = shown;
+    worker.task = { name: shown || role.name, summary: line };
     worker.activity = line;
     if (options.activity) applyActivity(worker, options.activity);
     workers.set(role.id, worker);
@@ -290,7 +296,7 @@ export function createOffice() {
     const messages = [];
     const lines = Array.isArray(snapshot?.lines) ? snapshot.lines : [];
     for (const line of lines) {
-      const spoken = say(line.role, line.text, { messageId: line.id, activity: line.activity });
+      const spoken = say(line.role, line.text, { messageId: line.id, activity: line.activity, name: line.name });
       if (spoken.messages) messages.push(...spoken.messages);
     }
     return { messages };

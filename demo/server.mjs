@@ -250,7 +250,7 @@ export function createServer({
             error: auth ? "hermes-auth" : "hermes-rejected",
             message: auth
               ? redactSecrets(outcome.detail || "Hermes 拒絕了憑證。這次沒有 Hire，也沒有改用 Mock 成功。", settings)
-              : "Hermes 有回應，但沒有建立 Bot。這次沒有 Hire。",
+              : `Hermes 沒有建立 Bot。這次沒有 Hire。${outcome.detail ? ` ${redactSecrets(outcome.detail, settings)}` : ""}`,
             status: outcome.status ?? null,
           });
           return;

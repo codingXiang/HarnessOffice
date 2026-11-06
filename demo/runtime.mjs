@@ -16,6 +16,7 @@ function freshRecord() {
     revision: 0,
     office: createSession(),
     bots: {},
+    ownedProfiles: [],
     clientIds: {},
     activity: {},
     seq: 0,
@@ -57,7 +58,7 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings, onChan
       bots: Object.fromEntries(
         Object.entries(record.bots).map(([role, bot]) => [
           role,
-          { profileName: bot.profileName, sessionId: bot.sessionId, route: bot.route },
+          { profileName: bot.profileName, sessionId: bot.sessionId, route: bot.route, displayName: bot.displayName },
         ]),
       ),
       activity: { ...record.activity },
@@ -69,6 +70,7 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings, onChan
     record = saved ? structuredClone(saved) : freshRecord();
     if (!record.office) record.office = createSession();
     record.bots ??= {};
+    record.ownedProfiles ??= [];
     record.clientIds ??= {};
     record.activity ??= {};
     record.seq ??= 0;
@@ -142,7 +144,13 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings, onChan
       displayName: candidate.displayName,
       template,
       fetchImpl,
+      ownsProfile: (record.ownedProfiles ?? []).includes(candidate.id)
+        || Object.values(record.bots).some((bot) => bot.profileName === candidate.id),
     });
+    if (outcome.ownedProfile) {
+      record.ownedProfiles = [...new Set([...(record.ownedProfiles ?? []), outcome.ownedProfile])];
+      touch();
+    }
     if (!outcome.ok) {
       const text = outcome.reason === "auth"
         ? redactSecrets(outcome.detail || "Hermes 拒絕了憑證。這次沒有 Hire，也沒有改用 Mock 成功。", loadSettings())
@@ -294,12 +302,16 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings, onChan
 
 export function visualSnapshot(sessionView) {
   const office = sessionView.office;
+  const names = {};
+  for (const [role, bot] of Object.entries(sessionView.bots ?? {})) {
+    if (bot?.displayName) names[role] = bot.displayName;
+  }
   const lines = [];
   for (const message of office.messages) {
     if (!message.text || message.from === "human") continue;
     const role = message.from === "system" ? "系統" : message.from;
     const activity = sessionView.activity?.[role] || (message.delivery === "pending" ? "working" : "idle");
-    lines.push({ id: message.id, role, text: message.text, activity });
+    lines.push({ id: message.id, role, name: names[role] || role, text: message.text, activity });
   }
   const roles = office.present.map((role) => {
     const last = [...lines].reverse().find((line) => line.role === role);

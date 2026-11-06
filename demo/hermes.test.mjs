@@ -51,13 +51,21 @@ test("a live Hire creates the profile and a stable session on that profile", asy
     candidateId: "fe-wu",
     displayName: "吳像素",
     template: fe,
-    settings,
+    settings: { ...settings, dashboardToken: "dash-explicit" },
     fetchImpl: async (url, init) => {
       calls.push({ url, method: init.method, body: init.body, authorization: init.headers?.authorization });
       if (url.endsWith("/health") && !url.includes("/p/")) return json(200, { status: "ok", platform: "hermes-agent" });
       if (url.endsWith("/v1/capabilities")) return json(200, { features: { session_chat_streaming: true } });
       if (url.includes("/p/__ho_probe__/health")) return json(404, { error: "Unknown or unconfigured profile" });
       if (url.endsWith("/api/profiles")) return json(201, { ok: true, name: "fe-wu" });
+      if (url.endsWith("/api/env") && init.method === "PUT") {
+        const body = JSON.parse(init.body);
+        assert.equal(body.key, "API_SERVER_KEY");
+        assert.equal(body.profile, "fe-wu");
+        assert.equal(body.value, "desk-token");
+        assert.equal(init.headers.authorization, "Bearer dash-explicit");
+        return json(200, { ok: true, key: "API_SERVER_KEY" });
+      }
       if (url.endsWith("/api/sessions")) return json(201, { object: "hermes.session", session: { id: "ho-fe-wu" } });
       throw new Error(`unexpected ${url}`);
     },
@@ -254,6 +262,7 @@ test("an explicit dashboard credential is sent on its own and is not the API key
       }
       if (url.includes("/p/__ho_probe__/health")) return json(404, { error: "Unknown or unconfigured profile" });
       if (url.endsWith("/api/profiles")) return json(201, { ok: true, name: "fe-wu" });
+      if (url.endsWith("/api/env") && init.method === "PUT") return json(200, { ok: true, key: "API_SERVER_KEY" });
       if (url.endsWith("/api/sessions")) return json(201, { object: "hermes.session" });
       throw new Error(url);
     },
@@ -264,6 +273,109 @@ test("an explicit dashboard credential is sent on its own and is not the API key
   assert.equal(profile.session, "dash-explicit");
   assert.equal(profile.authorization.includes("desk-token"), false);
   assert.equal(JSON.stringify(result.profile).includes("dash-explicit"), false);
+});
+
+test("an existing profile this app does not own is not given a new API key", async () => {
+  const calls = [];
+  const result = await hireWithHermes({
+    role: "FE",
+    candidateId: "fe-wu",
+    displayName: "吳像素",
+    template: fe,
+    settings: { ...settings, dashboardToken: "dash-explicit" },
+    ownsProfile: false,
+    fetchImpl: async (url, init) => {
+      calls.push({ url, method: init.method });
+      if (url.endsWith("/health") && !url.includes("/p/")) return json(200, { status: "ok" });
+      if (url.endsWith("/v1/capabilities")) return json(200, {});
+      if (url.includes("/p/__ho_probe__/health")) return json(404, { error: "Unknown or unconfigured profile" });
+      if (url.endsWith("/api/profiles")) return json(400, { detail: "A profile named 'fe-wu' already exists." });
+      throw new Error(url);
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "conflict");
+  assert.equal(calls.some((call) => call.url.endsWith("/api/env")), false);
+  assert.equal(calls.some((call) => call.url.endsWith("/api/sessions")), false);
+});
+
+test("a profile this app already owns gets a key only when the session rejects the current one", async () => {
+  const calls = [];
+  let sessionTries = 0;
+  const result = await hireWithHermes({
+    role: "FE",
+    candidateId: "fe-wu",
+    displayName: "吳像素",
+    template: fe,
+    settings: { ...settings, dashboardToken: "dash-explicit" },
+    ownsProfile: true,
+    fetchImpl: async (url, init) => {
+      calls.push({ url, method: init.method });
+      if (url.endsWith("/health") && !url.includes("/p/")) return json(200, { status: "ok" });
+      if (url.endsWith("/v1/capabilities")) return json(200, {});
+      if (url.includes("/p/__ho_probe__/health")) return json(404, { error: "Unknown or unconfigured profile" });
+      if (url.endsWith("/api/profiles")) return json(400, { detail: "A profile named 'fe-wu' already exists." });
+      if (url.endsWith("/api/sessions")) {
+        sessionTries += 1;
+        return json(sessionTries === 1 ? 401 : 201, sessionTries === 1 ? { error: { code: "gateway_auth_failed" } } : { object: "hermes.session" });
+      }
+      if (url.endsWith("/api/env") && init.method === "PUT") return json(200, { ok: true, key: "API_SERVER_KEY" });
+      throw new Error(url);
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.profile.hermes.sessionId, "ho-fe-wu");
+  assert.equal(calls.filter((call) => call.url.endsWith("/api/env") && call.method === "PUT").length, 1);
+  assert.equal(calls.filter((call) => call.url.endsWith("/api/sessions")).length, 2);
+});
+
+test("an owned profile whose session already accepts the key is not rekeyed", async () => {
+  const calls = [];
+  const result = await hireWithHermes({
+    role: "FE",
+    candidateId: "fe-wu",
+    displayName: "吳像素",
+    template: fe,
+    settings: { ...settings, dashboardToken: "dash-explicit" },
+    ownsProfile: true,
+    fetchImpl: async (url, init) => {
+      calls.push({ url, method: init.method });
+      if (url.endsWith("/health") && !url.includes("/p/")) return json(200, { status: "ok" });
+      if (url.endsWith("/v1/capabilities")) return json(200, {});
+      if (url.includes("/p/__ho_probe__/health")) return json(404, { error: "Unknown or unconfigured profile" });
+      if (url.endsWith("/api/profiles")) return json(400, { detail: "A profile named 'fe-wu' already exists." });
+      if (url.endsWith("/api/sessions")) return json(409, { error: { code: "session_exists" } });
+      throw new Error(url);
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.profile.hermes.sessionId, "ho-fe-wu");
+  assert.equal(calls.some((call) => call.url.endsWith("/api/env")), false);
+});
+
+test("a failed profile key write does not open a session or keep the secret", async () => {
+  const calls = [];
+  const result = await hireWithHermes({
+    role: "FE",
+    candidateId: "fe-wu",
+    displayName: "吳像素",
+    template: fe,
+    settings: { ...settings, dashboardToken: "dash-explicit" },
+    fetchImpl: async (url, init) => {
+      calls.push({ url, method: init.method });
+      if (url.endsWith("/health") && !url.includes("/p/")) return json(200, { status: "ok" });
+      if (url.endsWith("/v1/capabilities")) return json(200, {});
+      if (url.includes("/p/__ho_probe__/health")) return json(404, { error: "Unknown or unconfigured profile" });
+      if (url.endsWith("/api/profiles")) return json(201, { ok: true, name: "fe-wu" });
+      if (url.endsWith("/api/env") && init.method === "PUT") return json(500, { detail: "write failed for desk-token" });
+      throw new Error(url);
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "key-provision");
+  assert.equal(result.ownedProfile, "fe-wu");
+  assert.equal(String(result.detail).includes("desk-token"), false);
+  assert.equal(calls.some((call) => call.url.endsWith("/api/sessions")), false);
 });
 
 test("secrets are redacted before an error is shown", () => {
