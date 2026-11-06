@@ -35,6 +35,38 @@ async function until(messages, pred) {
   throw new Error(`timed out waiting among ${messages.map((m) => m.t).join(",")}`);
 }
 
+test("a Group Chat snapshot is spoken once and a reconnect does not repeat it", async () => {
+  const server = createSpikeServer({ clientDist: null });
+  const port = await listen(server);
+  try {
+    const body = {
+      revision: 3,
+      lines: [{ id: "m-pm", role: "PM", text: "我先把驗收條件列出來。", activity: "idle" }],
+    };
+    const first = await fetch(`http://127.0.0.1:${port}/api/spike/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    assert.equal(first.status, 200);
+    const second = await fetch(`http://127.0.0.1:${port}/api/spike/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const repeated = await second.json();
+    assert.equal(repeated.applied, 0);
+    const client = connect(port);
+    await client.opened;
+    const welcome = await until(client.messages, (message) => message.t === "welcome");
+    const copies = welcome.chat.filter((line) => line.text === "我先把驗收條件列出來。");
+    assert.equal(copies.length, 1);
+    client.ws.terminate();
+  } finally {
+    await close(server);
+  }
+});
+
 test("spike listens on 0.0.0.0 unless HOST is set", () => {
   assert.equal(spikeBind({}).host, "0.0.0.0");
   assert.equal(spikeBind({}).port, 4600);

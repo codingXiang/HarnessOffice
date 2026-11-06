@@ -47,8 +47,10 @@ export function publicHermesSettings(settings, extra = {}) {
   const normalized = normalizeSettings(settings);
   return {
     configured: isConfigured(normalized),
-    endpoint: normalized.endpoint,
+    apiBase: normalized.apiBase,
+    dashboardBase: normalized.dashboardBase,
     tokenSet: normalized.token !== "",
+    dashboardTokenSet: normalized.dashboardToken !== "",
     bot: normalized.bot,
     group: normalized.group,
     ...extra,
@@ -58,15 +60,26 @@ export function publicHermesSettings(settings, extra = {}) {
 export function saveHermesSettings(file, update, deps = {}) {
   const previous = loadHermesSettings(file, deps);
   const draft = {
-    endpoint: Object.hasOwn(update ?? {}, "endpoint") ? update.endpoint : previous.endpoint,
+    apiBase: Object.hasOwn(update ?? {}, "apiBase")
+      ? update.apiBase
+      : Object.hasOwn(update ?? {}, "endpoint")
+        ? update.endpoint
+        : previous.apiBase,
+    dashboardBase: Object.hasOwn(update ?? {}, "dashboardBase") ? update.dashboardBase : previous.dashboardBase,
     token: previous.token,
+    dashboardToken: previous.dashboardToken,
     bot: { ...previous.bot, ...(update?.bot ?? {}) },
-    group: { ...previous.group, ...(update?.group ?? {}) },
+    group: { name: update?.group?.name ?? previous.group.name },
   };
-  if (update?.clearToken) draft.token = "";
-  else if (typeof update?.token === "string" && update.token !== "") draft.token = update.token;
+  if (update?.clearToken) {
+    draft.token = "";
+    draft.dashboardToken = "";
+  } else {
+    if (typeof update?.token === "string" && update.token !== "") draft.token = update.token;
+    if (typeof update?.dashboardToken === "string" && update.dashboardToken !== "") draft.dashboardToken = update.dashboardToken;
+  }
   const next = normalizeSettings(draft);
-  if (endpointError(next.endpoint)) {
+  if (endpointError(next.apiBase) || endpointError(next.dashboardBase)) {
     const error = new Error("bad-endpoint");
     error.code = "bad-endpoint";
     throw error;

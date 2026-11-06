@@ -117,7 +117,7 @@ function listenPort(server) {
   return address && typeof address === "object" ? address.port : 4600;
 }
 
-export function createSpikeServer({ clientDist = defaultClientDist, office = createOffice() } = {}) {
+export function createSpikeServer({ clientDist = defaultClientDist, office = createOffice(), chatUrl = null } = {}) {
   const peers = new Map();
   const sockets = new Set();
   let seq = 0;
@@ -171,13 +171,20 @@ export function createSpikeServer({ clientDist = defaultClientDist, office = cre
       }
       if (req.method === "POST" && url.pathname === "/api/spike/say") {
         const body = await readJson(req);
-        const result = office.say(body.role, body.text);
+        const result = office.say(body.role, body.text, { messageId: body.messageId, activity: body.activity });
         if (result.error) {
           sendJson(res, 400, { error: result.error });
           return;
         }
         for (const msg of result.messages) broadcast(msg);
-        sendJson(res, 200, { worker: result.worker, text: body.text });
+        sendJson(res, 200, { worker: result.worker, text: body.text, duplicate: !!result.duplicate });
+        return;
+      }
+      if (req.method === "POST" && url.pathname === "/api/spike/session") {
+        const body = await readJson(req);
+        const result = office.applySession(body);
+        for (const msg of result.messages) broadcast(msg);
+        sendJson(res, 200, { applied: result.messages.length, revision: body.revision ?? null });
         return;
       }
 
@@ -237,8 +244,21 @@ export function createSpikeServer({ clientDist = defaultClientDist, office = cre
         broadcast({ t: "peer.leave", id });
       });
       ws.on("error", () => ws.terminate());
-      send(ws, office.welcome(id, [...peers.values()], listenPort(server)));
-      broadcast({ t: "peer.join", peer }, ws);
+      const base = typeof chatUrl === "string" ? chatUrl.replace(/\/$/, "") : "";
+      const pulled = base
+        ? fetch(`${base}/api/session/visual`, { signal: AbortSignal.timeout(400) })
+            .then(async (response) => {
+              if (!response.ok) return;
+              const snapshot = await response.json();
+              const applied = office.applySession(snapshot);
+              for (const msg of applied.messages) broadcast(msg);
+            })
+            .catch(() => {})
+        : Promise.resolve();
+      pulled.then(() => {
+        send(ws, office.welcome(id, [...peers.values()], listenPort(server)));
+        broadcast({ t: "peer.join", peer }, ws);
+      });
       ws.on("message", (raw) => {
         let msg;
         try {
@@ -285,7 +305,7 @@ export function createSpikeServer({ clientDist = defaultClientDist, office = cre
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const { host, port } = spikeBind();
-  const server = createSpikeServer();
+  const server = createSpikeServer({ chatUrl: process.env.HARNESS_CHAT_URL ?? "http://127.0.0.1:4173" });
   server.listen(port, host, () => {
     const built = fs.existsSync(defaultClientDist);
     console.log(`HarnessOffice 3D spike http://${host}:${port}`);

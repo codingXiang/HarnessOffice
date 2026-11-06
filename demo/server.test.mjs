@@ -159,11 +159,22 @@ test("configured Hire posts to Hermes, then writes the Bot profile", async () =>
     hermesFile,
     hermesFetch: async (url, init) => {
       calls.push({ url, method: init.method, body: init.body });
-      if (init.method === "GET") return new Response("", { status: 401 });
-      return new Response(JSON.stringify({ ok: true, name: "fe-wu" }), {
-        status: 201,
-        headers: { "content-type": "application/json" },
-      });
+      if (url.endsWith("/health") && !url.includes("/p/")) {
+        return new Response(JSON.stringify({ status: "ok" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/v1/capabilities")) {
+        return new Response(JSON.stringify({ features: { session_chat_streaming: true } }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.includes("/p/__ho_probe__/health")) {
+        return new Response(JSON.stringify({ error: "Unknown or unconfigured profile" }), { status: 404, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/api/profiles")) {
+        return new Response(JSON.stringify({ ok: true, name: "fe-wu" }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/api/sessions")) {
+        return new Response(JSON.stringify({ object: "hermes.session" }), { status: 201, headers: { "content-type": "application/json" } });
+      }
+      return new Response("no", { status: 500 });
     },
   });
   const port = await listen(server);
@@ -172,10 +183,10 @@ test("configured Hire posts to Hermes, then writes the Bot profile", async () =>
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        endpoint: "https://hermes.example/api/profiles",
+        apiBase: "https://hermes.example",
         token: "desk-token",
         bot: { cloneFrom: "default", provider: "", model: "local" },
-        group: { name: "HarnessOffice", roomId: "room-7" },
+        group: { name: "HarnessOffice" },
       }),
     });
     const visible = await saved.json();
@@ -187,7 +198,7 @@ test("configured Hire posts to Hermes, then writes the Bot profile", async () =>
 
     const again = await fetch(`http://127.0.0.1:${port}/api/hermes`);
     const stored = await again.json();
-    assert.equal(stored.endpoint, "https://hermes.example/api/profiles");
+    assert.equal(stored.apiBase, "https://hermes.example");
     assert.equal(stored.bot.model, "local");
     assert.equal(Object.hasOwn(stored, "token"), false);
 
@@ -206,10 +217,14 @@ test("configured Hire posts to Hermes, then writes the Bot profile", async () =>
     const onDisk = JSON.parse(fs.readFileSync(body.file, "utf8"));
     assert.equal(onDisk.createdBy, "hermes");
     assert.equal(onDisk.hermesGroup.name, "HarnessOffice");
+    assert.equal(onDisk.hermes.sessionId, "ho-fe-wu");
+    assert.equal(onDisk.hermes.route, "multiplex");
     assert.equal(JSON.stringify(onDisk).includes("desk-token"), false);
-    assert.equal(calls.filter((call) => call.method === "POST").length, 1);
-    assert.equal(calls.find((call) => call.method === "POST").url, "https://hermes.example/api/profiles");
-    assert.equal(JSON.parse(calls.find((call) => call.method === "POST").body).name, "fe-wu");
+    const posts = calls.filter((call) => call.method === "POST");
+    assert.equal(posts.length, 2);
+    assert.equal(posts[0].url, "https://hermes.example/api/profiles");
+    assert.equal(JSON.parse(posts[0].body).name, "fe-wu");
+    assert.equal(posts[1].url, "https://hermes.example/p/fe-wu/api/sessions");
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

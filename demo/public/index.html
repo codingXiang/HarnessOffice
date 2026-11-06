@@ -21,10 +21,13 @@
           <p id="hermes-status">Mock mode：尚未設定 Hermes。Hire 不會呼叫 Hermes。</p>
         </div>
         <form id="hermes-form">
-          <label for="hermes-endpoint">Hermes endpoint（建立 Bot 的完整網址）
-            <input id="hermes-endpoint" name="endpoint" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://hermes.example/api/profiles" />
+          <label for="hermes-endpoint">Hermes API base（只有來源，不含路徑）
+            <input id="hermes-endpoint" name="apiBase" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://hermes.example" />
           </label>
-          <label for="hermes-token">憑證（Bearer token，留白表示不改）
+          <label for="hermes-dashboard">Dashboard base（留白表示跟 API base 相同，用來建立 profile）
+            <input id="hermes-dashboard" name="dashboardBase" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://hermes.example" />
+          </label>
+          <label for="hermes-token">API 憑證（只存在這台機器的設定檔，留白表示不改）
             <input id="hermes-token" name="token" type="password" autocomplete="off" />
           </label>
           <label for="hermes-clone-from">Bot：從哪個 profile 複製（clone from）
@@ -36,11 +39,8 @@
           <label for="hermes-model">Bot：model
             <input id="hermes-model" name="model" type="text" autocomplete="off" />
           </label>
-          <label for="hermes-group-name">Group Chat 名稱
+          <label for="hermes-group-name">Group Chat 名稱（寫進每個 Bot 的 session 標題，不會呼叫 groups.send）
             <input id="hermes-group-name" name="groupName" type="text" autocomplete="off" />
-          </label>
-          <label for="hermes-room-id">Group Chat id
-            <input id="hermes-room-id" name="roomId" type="text" autocomplete="off" />
           </label>
           <div class="actions">
             <button type="submit">儲存設定</button>

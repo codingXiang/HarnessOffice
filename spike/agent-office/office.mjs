@@ -122,6 +122,8 @@ function workerRecord(role, phaseName, prev) {
 export function createOffice() {
   const workers = new Map();
   const pulls = new Map();
+  const seenLines = new Set();
+  const transcript = [];
 
   function floorView(port = 4600) {
     const list = [...workers.values()];
@@ -196,15 +198,17 @@ export function createOffice() {
       ],
       projectsDir: { dir: "~/harness-office", custom: false },
       ice: [],
-      chat: [
-        {
-          from: "spike",
-          name: "Spike",
-          color: "#ffd166",
-          text: "Spectator view of desk 1 (HR) and desk 2 (PM). Press U to walk, or open ?view=first. npm run spike:office:demo moves them.",
-          at: Date.now(),
-        },
-      ],
+      chat: transcript.length > 0
+        ? transcript.slice(-20)
+        : [
+            {
+              from: "spike",
+              name: "Spike",
+              color: "#ffd166",
+              text: "Spectator view of desk 1 (HR) and desk 2 (PM). Press U to walk, or open ?view=first. Lines here come from the Group Chat on port 4173.",
+              at: Date.now(),
+            },
+          ],
       invites: false,
       version: "0.1.211",
       upgrade: { available: false, phase: "idle" },
@@ -240,19 +244,56 @@ export function createOffice() {
     return { worker, phase: phaseName, messages };
   }
 
-  /** A Mock Group Chat line. Known roles get it on the card over their head; anyone else is chat-only. */
-  function say(roleName, text) {
+  function applyActivity(worker, activity) {
+    if (activity === "working") {
+      worker.status = "working";
+      worker.action = "reading";
+      worker.acked = true;
+    } else if (activity === "waiting") {
+      worker.status = "needs_input";
+      worker.acked = false;
+      delete worker.action;
+    } else if (activity === "idle") {
+      worker.status = "idle";
+      worker.acked = true;
+      delete worker.action;
+    }
+  }
+
+  /** A Group Chat line. Known roles get it on the card over their head; anyone else is chat-only. */
+  function say(roleName, text, options = {}) {
     const line = typeof text === "string" ? text.trim().slice(0, 400) : "";
     if (!line) return { error: "empty" };
+    const messageId = options.messageId;
+    if (messageId && seenLines.has(messageId)) return { duplicate: true, messages: [] };
+    if (messageId) seenLines.add(messageId);
     const role = SPEAKERS[roleName];
     const chat = chatLine(role, line);
+    transcript.push({
+      from: role?.id ?? "spike",
+      name: role?.name ?? String(roleName || "Spike").slice(0, 24),
+      color: role?.color ?? "#ffd166",
+      text: line,
+      at: chat.at,
+    });
     if (!role) return { worker: null, messages: [{ ...chat, name: String(roleName || "Spike").slice(0, 24) }] };
     const prev = workers.get(role.id);
     const worker = workerRecord(role, prev ? phaseOf(prev) : "appear", prev);
     worker.task = { name: role.name, summary: line };
     worker.activity = line;
+    if (options.activity) applyActivity(worker, options.activity);
     workers.set(role.id, worker);
     return { worker, messages: [{ t: "worker.update", worker }, chat] };
+  }
+
+  function applySession(snapshot) {
+    const messages = [];
+    const lines = Array.isArray(snapshot?.lines) ? snapshot.lines : [];
+    for (const line of lines) {
+      const spoken = say(line.role, line.text, { messageId: line.id, activity: line.activity });
+      if (spoken.messages) messages.push(...spoken.messages);
+    }
+    return { messages };
   }
 
   return {
@@ -262,6 +303,7 @@ export function createOffice() {
     welcome,
     upsert,
     say,
+    applySession,
     snapshot() {
       return { workers: [...workers.values()], pulls: [...pulls.values()] };
     },

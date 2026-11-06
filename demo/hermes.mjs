@@ -1,17 +1,22 @@
 /**
- * Hermes hire adapter.
+ * Hermes runtime adapter. Routes are the ones NousResearch/hermes-agent
+ * documents for external callers (checked 2026-11 against gateway/platforms/api_server.py
+ * and hermes_cli/web_routers/profiles.py):
  *
- * Hypothesis, checked against NousResearch/hermes-agent (2026-11):
- * the dashboard creates a Bot profile with POST /api/profiles and a
- * ProfileCreate body (`name`, `description`, `clone_from`, `provider`,
- * `model`). See hermes_cli/web_models.py and web_routers/profiles.py.
- * bot-forge's `create_agent` is an in-agent tool, not an HTTP route.
- * Group membership (`hermes group add`, gateway `groups.*`) has no
- * verified REST route here, so group settings are stored on the Bot
- * profile and are not a second request.
+ *   GET  {apiBase}/health
+ *   GET  {apiBase}/v1/capabilities          Bearer API_SERVER_KEY
+ *   GET  {apiBase}/p/__ho_probe__/health    404 means multiplex is on; 200 means the prefix is ignored
+ *   POST {dashboardBase}/api/profiles       ProfileCreate
+ *   POST {apiBase}/p/{profile}/api/sessions
+ *   POST {apiBase}/p/{profile}/api/sessions/{id}/chat/stream
  *
- * The operator's endpoint is the full URL we GET (reachability: any
- * HTTP response) and POST. This file does not choose a host.
+ * The canonical gateway groups.* methods are metadata. Gateway Internals says
+ * that surface reports driver:false and does not run a group turn, so this
+ * adapter does not call groups.send or invent a room-membership route.
+ * HarnessOffice keeps the Group Chat transcript and delivers each Role's
+ * line to that profile's API session.
+ *
+ * apiBase and dashboardBase come from the operator. This file has no host.
  */
 
 function text(value) {
@@ -20,36 +25,51 @@ function text(value) {
 
 export function emptySettings() {
   return {
-    endpoint: "",
+    apiBase: "",
+    dashboardBase: "",
     token: "",
+    dashboardToken: "",
     bot: { cloneFrom: "", provider: "", model: "" },
-    group: { name: "", roomId: "" },
+    group: { name: "" },
   };
+}
+
+function asOrigin(value) {
+  const raw = text(value);
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return raw;
+    return url.origin;
+  } catch {
+    return raw;
+  }
 }
 
 export function normalizeSettings(input) {
   const raw = input && typeof input === "object" ? input : {};
   const bot = raw.bot && typeof raw.bot === "object" ? raw.bot : {};
   const group = raw.group && typeof raw.group === "object" ? raw.group : {};
+  const apiBase = asOrigin(raw.apiBase) || asOrigin(raw.endpoint);
+  const dashboardBase = asOrigin(raw.dashboardBase) || apiBase;
   return {
-    endpoint: text(raw.endpoint),
+    apiBase,
+    dashboardBase,
     token: typeof raw.token === "string" ? raw.token : "",
+    dashboardToken: typeof raw.dashboardToken === "string" ? raw.dashboardToken : "",
     bot: {
       cloneFrom: text(bot.cloneFrom),
       provider: text(bot.provider),
       model: text(bot.model),
     },
-    group: {
-      name: text(group.name),
-      roomId: text(group.roomId),
-    },
+    group: { name: text(group.name) },
   };
 }
 
-export function endpointError(endpoint) {
-  if (!endpoint) return null;
+export function endpointError(value) {
+  if (!value) return null;
   try {
-    const url = new URL(endpoint);
+    const url = new URL(value);
     if (url.protocol !== "http:" && url.protocol !== "https:") return "bad-endpoint";
   } catch {
     return "bad-endpoint";
@@ -59,7 +79,7 @@ export function endpointError(endpoint) {
 
 export function isConfigured(settings) {
   const normalized = normalizeSettings(settings);
-  return normalized.endpoint !== "" && endpointError(normalized.endpoint) === null;
+  return normalized.apiBase !== "" && endpointError(normalized.apiBase) === null && endpointError(normalized.dashboardBase) === null;
 }
 
 export function profileCreateBody({ role, candidateId, displayName, template, settings }) {
@@ -73,67 +93,94 @@ export function profileCreateBody({ role, candidateId, displayName, template, se
   return body;
 }
 
-function authHeaders(settings) {
-  if (!settings.token) return {};
+export function botSessionId(profileName) {
+  return `ho-${profileName}`;
+}
+
+export function redactSecrets(value, settings) {
+  let out = String(value ?? "");
+  const normalized = normalizeSettings(settings);
+  for (const secret of [normalized.token, normalized.dashboardToken]) {
+    if (secret.length > 3) out = out.split(secret).join("[redacted]");
+  }
+  return out.replace(/Bearer\s+\S+/gi, "Bearer [redacted]").slice(0, 400);
+}
+
+function bearer(token) {
+  if (!token) return {};
+  return { authorization: `Bearer ${token}` };
+}
+
+function dashboardHeaders(settings) {
+  const token = settings.dashboardToken || settings.token;
+  if (!token) return { "content-type": "application/json" };
   return {
-    authorization: `Bearer ${settings.token}`,
-    "x-hermes-session-token": settings.token,
+    "content-type": "application/json",
+    authorization: `Bearer ${token}`,
+    "x-hermes-session-token": token,
   };
 }
 
-export async function probeHermes(settings, fetchImpl, { timeoutMs = 2500 } = {}) {
-  const normalized = normalizeSettings(settings);
-  if (!isConfigured(normalized)) return { reachable: false, reason: "unconfigured" };
-  try {
-    const response = await fetchImpl(normalized.endpoint, {
-      method: "GET",
-      headers: authHeaders(normalized),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    return { reachable: true, status: response.status };
-  } catch {
-    return { reachable: false, reason: "unreachable" };
-  }
-}
-
-export async function createHermesBot(settings, payload, fetchImpl, { timeoutMs = 8000 } = {}) {
-  const normalized = normalizeSettings(settings);
-  const response = await fetchImpl(normalized.endpoint, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...authHeaders(normalized),
-    },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+async function readBody(response) {
   const raw = await response.text();
-  let body = null;
-  if (raw) {
-    try {
-      body = JSON.parse(raw);
-    } catch {
-      body = { raw: raw.slice(0, 200) };
-    }
+  if (!raw) return { raw: "", json: null };
+  try {
+    return { raw, json: JSON.parse(raw) };
+  } catch {
+    return { raw, json: null };
   }
-  return { ok: response.status >= 200 && response.status < 300, status: response.status, body };
 }
 
-function withGroup(profile, settings) {
-  if (!settings.group.name && !settings.group.roomId) return profile;
-  return { ...profile, hermesGroup: { name: settings.group.name, roomId: settings.group.roomId } };
+function alreadyExists(status, parsed) {
+  if (status === 409) return true;
+  if (status !== 400) return false;
+  return JSON.stringify(parsed.json ?? parsed.raw).toLowerCase().includes("exist");
 }
 
-function botProfile(template, { candidateId, displayName, createdBy }, settings) {
-  return withGroup(
-    {
-      ...structuredClone(template),
-      displayName,
-      candidateId,
-      createdBy,
-    },
-    settings,
-  );
+export async function inspectRuntime(settings, fetchImpl, { timeoutMs = 2500 } = {}) {
+  const normalized = normalizeSettings(settings);
+  if (!isConfigured(normalized)) return { state: "unconfigured", multiplex: null };
+  const signal = () => AbortSignal.timeout(timeoutMs);
+  let health;
+  try {
+    health = await fetchImpl(`${normalized.apiBase}/health`, { method: "GET", signal: signal() });
+  } catch {
+    return { state: "offline", multiplex: null };
+  }
+  if (!health.ok) return { state: "offline", status: health.status, multiplex: null };
+  let capabilities;
+  try {
+    capabilities = await fetchImpl(`${normalized.apiBase}/v1/capabilities`, {
+      method: "GET",
+      headers: bearer(normalized.token),
+      signal: signal(),
+    });
+  } catch {
+    return { state: "offline", multiplex: null };
+  }
+  if (capabilities.status === 401 || capabilities.status === 403) {
+    return { state: "auth", status: capabilities.status, multiplex: null };
+  }
+  if (!capabilities.ok) return { state: "unavailable", status: capabilities.status, multiplex: null };
+  let probe;
+  try {
+    probe = await fetchImpl(`${normalized.apiBase}/p/__ho_probe__/health`, { method: "GET", signal: signal() });
+  } catch {
+    return { state: "offline", multiplex: null };
+  }
+  const multiplex = probe.status === 404 ? true : probe.ok ? false : null;
+  return { state: "live", multiplex, status: capabilities.status };
+}
+
+export async function probeHermes(settings, fetchImpl, options) {
+  const inspected = await inspectRuntime(settings, fetchImpl, options);
+  return {
+    reachable: inspected.state === "live" || inspected.state === "auth" || inspected.state === "unavailable",
+    state: inspected.state,
+    multiplex: inspected.multiplex,
+    status: inspected.status ?? null,
+    reason: inspected.state === "offline" ? "unreachable" : inspected.state,
+  };
 }
 
 export async function hireWithHermes({
@@ -143,38 +190,207 @@ export async function hireWithHermes({
   displayName,
   template,
   fetchImpl,
-  timeoutMs,
+  timeoutMs = 8000,
 }) {
   const normalized = normalizeSettings(settings);
-  const base = botProfile(template, { candidateId, displayName, createdBy: "mock-hermes" }, normalized);
+  const localProfile = (createdBy, hermes) => ({
+    ...structuredClone(template),
+    displayName,
+    candidateId,
+    createdBy,
+    ...(normalized.group.name ? { hermesGroup: { name: normalized.group.name } } : {}),
+    ...(hermes ? { hermes } : {}),
+  });
 
   if (!isConfigured(normalized)) {
-    return { ok: true, mode: "mock", reason: "unconfigured", profile: base };
+    return { ok: true, mode: "mock", reason: "unconfigured", profile: localProfile("mock-hermes") };
   }
-
-  const probe = await probeHermes(normalized, fetchImpl, { timeoutMs });
-  if (!probe.reachable) {
-    return { ok: true, mode: "mock", reason: "unreachable", profile: base };
+  const inspected = await inspectRuntime(normalized, fetchImpl, { timeoutMs });
+  if (inspected.state === "offline") {
+    return { ok: true, mode: "mock", reason: "unreachable", profile: localProfile("mock-hermes") };
+  }
+  if (inspected.state === "auth") {
+    return { ok: false, mode: "live", reason: "auth", status: inspected.status ?? 401 };
+  }
+  if (inspected.state !== "live") {
+    return { ok: false, mode: "live", reason: inspected.state, status: inspected.status ?? 502 };
   }
 
   const payload = profileCreateBody({ role, candidateId, displayName, template, settings: normalized });
   let created;
   try {
-    created = await createHermesBot(normalized, payload, fetchImpl, { timeoutMs });
+    created = await fetchImpl(`${normalized.dashboardBase}/api/profiles`, {
+      method: "POST",
+      headers: dashboardHeaders(normalized),
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
   } catch {
-    return { ok: true, mode: "mock", reason: "unreachable", profile: base };
+    return { ok: true, mode: "mock", reason: "unreachable", profile: localProfile("mock-hermes") };
   }
-  if (!created.ok) {
-    return { ok: false, mode: "live", reason: "rejected", status: created.status, detail: created.body };
+  const createdBody = await readBody(created);
+  if (!created.ok && !alreadyExists(created.status, createdBody)) {
+    return {
+      ok: false,
+      mode: "live",
+      reason: "rejected",
+      status: created.status,
+      detail: redactSecrets(createdBody.raw, normalized),
+    };
   }
-  const name = typeof created.body?.name === "string" && created.body.name ? created.body.name : payload.name;
+  const profileName = payload.name;
+  if (inspected.multiplex !== true) {
+    return {
+      ok: true,
+      mode: "live",
+      reason: "profile-only",
+      profile: localProfile("hermes", { name: profileName, sessionId: null, route: "unavailable" }),
+    };
+  }
+
+  const sessionId = botSessionId(profileName);
+  let session;
+  try {
+    session = await fetchImpl(`${normalized.apiBase}/p/${encodeURIComponent(profileName)}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...bearer(normalized.token) },
+      body: JSON.stringify({
+        id: sessionId,
+        title: normalized.group.name ? `Group: ${normalized.group.name}` : `Group: ${role}`,
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch {
+    return { ok: false, mode: "live", reason: "unreachable", status: 0 };
+  }
+  const sessionBody = await readBody(session);
+  if (!session.ok && !alreadyExists(session.status, sessionBody)) {
+    return {
+      ok: false,
+      mode: "live",
+      reason: "session-rejected",
+      status: session.status,
+      detail: redactSecrets(sessionBody.raw, normalized),
+    };
+  }
   return {
     ok: true,
     mode: "live",
     reason: "created",
-    profile: {
-      ...botProfile(template, { candidateId, displayName, createdBy: "hermes" }, normalized),
-      hermes: { name },
-    },
+    profile: localProfile("hermes", { name: profileName, sessionId, route: "multiplex" }),
   };
+}
+
+function parseSseChunk(buffer) {
+  const parts = buffer.split(/\n\n/);
+  const rest = parts.pop() ?? "";
+  const events = [];
+  for (const part of parts) {
+    if (!part.trim() || part.trimStart().startsWith(":")) continue;
+    let event = "message";
+    const dataLines = [];
+    for (const line of part.split(/\n/)) {
+      if (line.startsWith(":")) continue;
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+    }
+    if (dataLines.length === 0) continue;
+    const raw = dataLines.join("\n");
+    try {
+      events.push({ event, data: JSON.parse(raw), malformed: false });
+    } catch {
+      events.push({ event, data: null, malformed: true, raw });
+    }
+  }
+  return { events, rest };
+}
+
+export async function streamBotTurn({
+  settings,
+  profileName,
+  sessionId,
+  input,
+  instructions,
+  fetchImpl,
+  signal,
+  onEvent,
+  timeoutMs = 60000,
+}) {
+  const normalized = normalizeSettings(settings);
+  const url = `${normalized.apiBase}/p/${encodeURIComponent(profileName)}/api/sessions/${encodeURIComponent(sessionId)}/chat/stream`;
+  let response;
+  try {
+    response = await fetchImpl(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...bearer(normalized.token) },
+      body: JSON.stringify({ input, instructions }),
+      signal: signal ?? AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") return { ok: false, reason: "cancelled" };
+    return { ok: false, reason: "offline" };
+  }
+  if (response.status === 401 || response.status === 403) return { ok: false, reason: "auth", status: response.status };
+  if (!response.ok) {
+    const body = await readBody(response);
+    return { ok: false, reason: "rejected", status: response.status, detail: redactSecrets(body.raw, normalized) };
+  }
+  const contentType = response.headers.get?.("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    const body = await readBody(response);
+    const text = body.json?.message?.content;
+    if (typeof text !== "string" || !text.trim()) return { ok: false, reason: "malformed" };
+    return { ok: true, text };
+  }
+  let buffer = "";
+  let completed = null;
+  let terminal = null;
+  let malformed = false;
+  const consume = (events) => {
+    for (const item of events) {
+      if (item.malformed) {
+        malformed = true;
+        terminal = { ok: false, reason: "malformed" };
+        continue;
+      }
+      if (malformed) continue;
+      if (item.event === "tool.started") onEvent?.({ type: "tool", name: item.data?.tool_name ?? "" });
+      if (item.event === "assistant.delta") onEvent?.({ type: "delta" });
+      if (item.event === "assistant.completed" && typeof item.data?.content === "string") completed = item.data.content;
+      if (item.event === "run.completed") terminal = { ok: true };
+      if (item.event === "run.failed" || item.event === "error") {
+        terminal = { ok: false, reason: "stream-error", detail: redactSecrets(item.data?.message ?? item.data?.error ?? "stream error", normalized) };
+      }
+      if (item.event === "run.cancelled") terminal = { ok: false, reason: "cancelled" };
+    }
+  };
+  if (!response.body?.getReader) {
+    const parsed = parseSseChunk(`${await response.text()}\n\n`);
+    consume(parsed.events);
+  } else {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    try {
+      while (!terminal || terminal.ok) {
+        const step = await reader.read();
+        if (step.done) {
+          const parsed = parseSseChunk(`${buffer}\n\n`);
+          consume(parsed.events);
+          break;
+        }
+        buffer += decoder.decode(step.value, { stream: true });
+        const parsed = parseSseChunk(buffer);
+        buffer = parsed.rest;
+        consume(parsed.events);
+        if (terminal && !terminal.ok) break;
+      }
+    } catch (error) {
+      if (error?.name === "AbortError") return { ok: false, reason: "cancelled" };
+      return { ok: false, reason: "interrupted" };
+    }
+  }
+  if (malformed) return { ok: false, reason: "malformed" };
+  if (terminal && terminal.ok === false) return { ok: false, reason: terminal.reason, detail: terminal.detail };
+  if (!terminal || typeof completed !== "string") return { ok: false, reason: "interrupted" };
+  return { ok: true, text: completed };
 }

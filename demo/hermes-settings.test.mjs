@@ -13,7 +13,7 @@ import {
 test("a missing settings file is Mock mode", () => {
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ho-hermes-")), "hermes.json");
   const loaded = loadHermesSettings(file);
-  assert.equal(loaded.endpoint, "");
+  assert.equal(loaded.apiBase, "");
   assert.equal(publicHermesSettings(loaded).configured, false);
   assert.equal(publicHermesSettings(loaded).tokenSet, false);
   assert.equal(Object.hasOwn(publicHermesSettings(loaded), "token"), false);
@@ -41,7 +41,7 @@ test("saved endpoint, bot, and group settings survive a reread, and a blank toke
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
 
   const cleared = saveHermesSettings(file, { endpoint: "", clearToken: true });
-  assert.equal(cleared.endpoint, "");
+  assert.equal(cleared.apiBase, "");
   assert.equal(cleared.token, "");
   assert.equal(publicHermesSettings(cleared).configured, false);
 });

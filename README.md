@@ -42,17 +42,21 @@ Bot profile 仍寫到 `~/harness-office-iac/bots/`。那個目錄不可寫時，
 
 ## 接上 Hermes（仍不寫 GitHub、不啟動 OpenCode）
 
-Mock mode 仍是預設。要改成真的 Hire，在 chat 頁的 **Hermes 設定** 填 endpoint 與 Bot、Group 設定，不要在程式裡寫死 host。空著就繼續 Mock。設定存在 `~/harness-office-iac/hermes.json`（不能寫時是 `./.hermes-settings.json`），重開還在。瀏覽器也留一份 `localStorage`，但 Hire 讀的是那個檔。
+Mock mode 仍是預設。Chat 與 3D 一起開：
 
-Endpoint 填 Hermes 建立 Bot 的完整網址，例如你自己的 dashboard：
-
-```text
-https://<你的 Hermes>/api/profiles
+```bash
+npm install
+npm run spike:office:client
+./scripts/run-harness-office.sh
 ```
 
-欄位怎麼對到 `POST /api/profiles`、連不上時為什麼仍是 Mock，以及這條 HTTP 哪些是已核對、哪些仍是假設，寫在 [`docs/hermes-settings.md`](docs/hermes-settings.md)。決定本身是 [ADR 0003](docs/adr/0003-hermes-settings-come-from-the-ui.md)。
+Chat 是 `http://127.0.0.1:4173`，3D 是 `http://127.0.0.1:4600`。`HOST` 預設 `0.0.0.0`，所以 Tailscale 打得到。`CHAT_PORT` 與 `VISUAL_PORT` 可改。
 
-Hire 連得上時：Hermes 建立 Bot，Bot profile 仍寫入 IaC store，Role 出現在 Office，並加入 Group Chat。連不上時 Group Chat 會寫明這次是 Mock，不會假裝已經建立 Bot。
+在 chat 頁填 **API base**（只有來源，例如 `https://<你的 Hermes>`），不要在程式裡寫死 host。空著就繼續 Mock。設定與 Group Chat 紀錄在 `~/harness-office-iac/`（不能寫時在 repo 旁的隱藏檔），重開還在，憑證不進瀏覽器。
+
+路由、multiplex、為什麼不呼叫 `groups.send`，寫在 [`docs/hermes-settings.md`](docs/hermes-settings.md)。決定本身是 [ADR 0003](docs/adr/0003-hermes-settings-come-from-the-ui.md)。
+
+連得上且 multiplex 有開：Hire 建立 Bot profile 與穩定的 API session，`@Role` 走到 `chat/stream`，同一則文字出現在 Group Chat 和 3D 頭上。連不上是明示的 Mock。憑證錯誤、拒絕、毀損、取消都不會裝成成功。
 
 建議走一遍：PixelOffice 裡先看到 HR → 在 chat `@HR PM` 再按 Hire → 同樣 Hire Tech Lead、FE、BE → `@PM 做一個像素 Office` → 核准 Issue → `@Tech Lead 分派` → 播放寫程式動畫。動畫結束是一張沒有送出的 Mock PR，FE 與 BE 在 PixelOffice 裡變成 success。
 
