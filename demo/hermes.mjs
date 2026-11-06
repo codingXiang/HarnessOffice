@@ -111,8 +111,12 @@ function bearer(token) {
   return { authorization: `Bearer ${token}` };
 }
 
-function dashboardHeaders(settings) {
-  const token = settings.dashboardToken || settings.token;
+export function dashboardSessionTokenFromHtml(html) {
+  const match = String(html ?? "").match(/__HERMES_SESSION_TOKEN__\s*=\s*(?:"([^"]+)"|'([^']+)')/);
+  return match?.[1] || match?.[2] || "";
+}
+
+function dashboardHeaders(token) {
   if (!token) return { "content-type": "application/json" };
   return {
     "content-type": "application/json",
@@ -217,18 +221,40 @@ export async function hireWithHermes({
   }
 
   const payload = profileCreateBody({ role, candidateId, displayName, template, settings: normalized });
+  const postProfile = (token) => fetchImpl(`${normalized.dashboardBase}/api/profiles`, {
+    method: "POST",
+    headers: dashboardHeaders(token),
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  let dashToken = normalized.dashboardToken;
   let created;
   try {
-    created = await fetchImpl(`${normalized.dashboardBase}/api/profiles`, {
-      method: "POST",
-      headers: dashboardHeaders(normalized),
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    created = await postProfile(dashToken);
   } catch {
     return { ok: true, mode: "mock", reason: "unreachable", profile: localProfile("mock-hermes") };
   }
+  // A loopback `hermes dashboard` rejects the API server key. Its own session
+  // token is injected into the HTML for the page. Use that once, and do not store it.
+  if (created.status === 401 && !normalized.dashboardToken) {
+    try {
+      const page = await fetchImpl(`${normalized.dashboardBase}/`, {
+        method: "GET",
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      const found = dashboardSessionTokenFromHtml(await page.text());
+      if (found) {
+        dashToken = found;
+        created = await postProfile(found);
+      }
+    } catch {
+      // leave the 401
+    }
+  }
   const createdBody = await readBody(created);
+  if (created.status === 401 || created.status === 403) {
+    return { ok: false, mode: "live", reason: "auth", status: created.status };
+  }
   if (!created.ok && !alreadyExists(created.status, createdBody)) {
     return {
       ok: false,
@@ -264,6 +290,15 @@ export async function hireWithHermes({
     return { ok: false, mode: "live", reason: "unreachable", status: 0 };
   }
   const sessionBody = await readBody(session);
+  if (session.status === 401 || session.status === 403) {
+    return {
+      ok: false,
+      mode: "live",
+      reason: "auth",
+      status: session.status,
+      detail: "這個 profile 不接受這把 API 憑證。每個 secondary profile 要有自己的 API_SERVER_KEY。",
+    };
+  }
   if (!session.ok && !alreadyExists(session.status, sessionBody)) {
     return {
       ok: false,
@@ -344,6 +379,7 @@ export async function streamBotTurn({
   }
   let buffer = "";
   let completed = null;
+  let completedFlag = null;
   let terminal = null;
   let malformed = false;
   const consume = (events) => {
@@ -356,10 +392,14 @@ export async function streamBotTurn({
       if (malformed) continue;
       if (item.event === "tool.started") onEvent?.({ type: "tool", name: item.data?.tool_name ?? "" });
       if (item.event === "assistant.delta") onEvent?.({ type: "delta" });
-      if (item.event === "assistant.completed" && typeof item.data?.content === "string") completed = item.data.content;
-      if (item.event === "run.completed") terminal = { ok: true };
+      if (item.event === "assistant.completed" && typeof item.data?.content === "string") {
+        completed = item.data.content;
+        if (typeof item.data.completed === "boolean") completedFlag = item.data.completed;
+      }
+      if (item.event === "run.completed" && item.data?.completed !== false && completedFlag !== false) terminal = { ok: true };
       if (item.event === "run.failed" || item.event === "error") {
-        terminal = { ok: false, reason: "stream-error", detail: redactSecrets(item.data?.message ?? item.data?.error ?? "stream error", normalized) };
+        const upstream = item.data?.message || item.data?.error || (completedFlag === false ? completed : "") || "stream error";
+        terminal = { ok: false, reason: "stream-error", detail: redactSecrets(upstream, normalized) };
       }
       if (item.event === "run.cancelled") terminal = { ok: false, reason: "cancelled" };
     }

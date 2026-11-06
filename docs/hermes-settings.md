@@ -35,7 +35,11 @@ POST {apiBase}/p/{profile}/api/sessions                id 固定為 ho-{profile}
 POST {apiBase}/p/{profile}/api/sessions/{id}/chat/stream
 ```
 
-`/health` 不需憑證，用來分出「連不上」。`/v1/capabilities` 回 401/403 是憑證錯誤，Hire 與回覆都失敗，不會改口說 Mock 成功。
+`/health` 不需憑證，用來分出「連不上」。`/v1/capabilities` 回 401/403 是 API server 憑證錯誤。Dashboard 的 `POST /api/profiles` 在 loopback 仍要 `X-Hermes-Session-Token`，那是頁面注入的 session token，不是 `API_SERVER_KEY`。畫面上的 Dashboard 憑證留白時，Hire 會讀一次那個頁面、只用在這次請求、不寫進設定檔。API 憑證不會拿去當 dashboard token。
+
+`/p/<profile>/` 要用該 profile 自己的 `API_SERVER_KEY`。只把 default 的 key 送過去會 401。這次沒有 Hire，也不會改口說 Mock 成功。
+
+`chat/stream` 若沒有模型供應者，上游會先送 `assistant.completed` 且 `completed: false`，接著 `run.failed`。那段警告不是 Role 的回覆，畫面只把它當成失敗。
 
 Profile 名稱用 Candidate id（例如 `pm-lin`）。遠端回 409，或 400 且內容含 already exists，視為同一個 Bot，不另取名字。Session id 也是固定的；409 代表沿用。
 
@@ -65,13 +69,17 @@ multiplex 有開，session 建立成功
 
 3D（port 4600）只顯示這份紀錄。`HARNESS_VISUAL_URL`（預設 `http://127.0.0.1:4600`）接收快照。3D 連上時也會向 `HARNESS_CHAT_URL`（預設 `http://127.0.0.1:4173`）拉一次 `/api/session/visual`。同一個 message id 不會講第二次。
 
-## 還沒在這台雲端跑過的部分
+## 在目前 upstream 上核對過的部分
 
-這份 repo 的測試用的是實作上述路由的契約替身，不是一組已付費、已登入模型的 Hermes。要在你的機器上看到模型真的回話，還需要你自己的 Hermes：
+2026-11-06 用官方安裝腳本 `install.sh --channel main --non-interactive --skip-browser --skip-computer-use` 裝了 NousResearch/hermes-agent `9242ce464b4a84fb8b7a81df18400099d2a1a790`（Hermes Agent v0.23.0+125.g9242ce4）。在這台雲端 VM 上對本機 gateway `127.0.0.1:8642` 與 dashboard `127.0.0.1:9119` 打過，沒有登入任何模型供應者：
 
-1. API server 開著，`API_SERVER_KEY` 填進畫面上的憑證。
-2. `gateway.multiplex_profiles` 開啟，這樣 `/p/<profile>/` 才是那個 Bot。
-3. 每個 secondary profile 有自己的 `API_SERVER_KEY`（Hermes 不接受用 default 的 key 打別人的前綴）。目前這份設定檔只有一把憑證；若 secondary profile 的 key 不同，對話會以 401 停住，不會假裝成功。
-4. 模型供應者的憑證在 Hermes 那一側。沒有它時，profile 與 session 仍可建立，`chat/stream` 會失敗，畫面顯示拒絕或中斷，不會編成一段假回覆。
+- `GET /health` → 200 `{"status":"ok","platform":"hermes-agent","version":"0.23.0"}`
+- `GET /v1/capabilities` 無憑證 → 401 `gateway_auth_failed`；帶 Bearer → 200，且 `session_chat` / `session_chat_streaming` 為 true
+- `GET /p/__ho_probe__/health` → 404 `Unknown or unconfigured profile`（`gateway.multiplex_profiles: true`）
+- `POST /api/profiles` 無 dashboard session token → 401；用頁面注入的 token → 200，`name` 就是送出的名字。再送一次 → 400，detail 含 `already exists`
+- 該 profile 沒有自己的 `API_SERVER_KEY` 時，`POST /p/<profile>/api/sessions` → 401。寫上同一把 key 之後 → 201，session id 就是我們送的 `ho-<profile>`。再送一次 → 409 `session_exists`。`GET` 仍看得到同一筆
+- `POST .../chat/stream` 沒有模型憑證 → HTTP 200 的 SSE，`assistant.completed` 的 `completed` 是 false，接著 `run.failed`。runtime 的 provider 與 model 都是空的。沒有模型回覆
+
+還沒有的是模型供應者憑證（`hermes model` / 對應的 API key，或 Nous Portal 登入）。沒有它就不會有真正的 Bot 回話。契約替身測試仍然在 `npm test` 裡，和這次上游程序是分開的。
 
 OpenCode 與 GitHub 寫入不在這一步。

@@ -20,7 +20,7 @@ npm run spike:office          # http://0.0.0.0:4600  and  /ws
 
 Restart the server after a client rebuild. The page is read from `vendor/agent-office/dist` on each request, but the welcome spawn lives in the Node process. Tailscale reaches this host on port 4600 (`HOST` defaults to `0.0.0.0`).
 
-Open that URL. The camera is a fixed overhead spectator aimed at the north-west pod: **desk 1 (HR)** and **desk 2 (PM)**. WASD does not move that camera. The first visit still asks you to pick a character (the upstream client stores it in `localStorage` under `agent-office.profile`); that choice does not change the camera.
+Open that URL, including `?view=spectator`. The camera is a fixed overhead spectator aimed at the north-west pod: **desk 1 (HR)** and **desk 2 (PM)**. WASD does not move that camera. A fresh browser does not get the character picker in spectator: the page connects as the guest already in the client and does not ask anyone to walk. `?view=first` still asks for a character before WASD. The upstream client stores a profile in `localStorage` under `agent-office.profile` after that guest is used.
 
 You are standing on the floor just south of that pod, not in the elevator shaft. `welcome.floor` is `harness`, so the shut-door path (`!store.floor`) does not run. A fresh welcome with that spot takes the client's `arrive('back')` path: doors open, you are already out of the car. Upstream only did that when this browser had a saved spot, and `placeInCar` pulled everyone else back into the shaft — including a peer the server had already stood outside it.
 

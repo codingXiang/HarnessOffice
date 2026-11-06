@@ -178,6 +178,59 @@ test("cancelling the turn does not become a successful reply", async () => {
   assert.equal(result.reason, "cancelled");
 });
 
+test("a provider failure frame is not a successful reply", async () => {
+  const sse = [
+    "event: assistant.completed",
+    'data: {"content":"could not connect to the model","completed":false}',
+    "",
+    "event: run.failed",
+    'data: {"completed":false}',
+    "",
+  ].join("\n");
+  const result = await streamBotTurn({
+    settings,
+    profileName: "fe-wu",
+    sessionId: "ho-fe-wu",
+    input: "你好",
+    instructions: "你是 FE",
+    fetchImpl: async () => new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "stream-error");
+  assert.match(result.detail, /could not connect to the model/);
+});
+
+test("a loopback dashboard session token is used when the API key is refused", async () => {
+  const calls = [];
+  const result = await hireWithHermes({
+    role: "FE",
+    candidateId: "fe-wu",
+    displayName: "吳像素",
+    template: fe,
+    settings,
+    fetchImpl: async (url, init) => {
+      calls.push({ url, session: init.headers?.["x-hermes-session-token"] ?? "" });
+      if (url.endsWith("/health") && !url.includes("/p/")) return json(200, { status: "ok" });
+      if (url.endsWith("/v1/capabilities")) return json(200, {});
+      if (url.includes("/p/__ho_probe__/health")) return json(404, { error: "Unknown or unconfigured profile" });
+      if (url.endsWith("/api/profiles") && !init.headers?.["x-hermes-session-token"]) return json(401, { detail: "Unauthorized" });
+      if (url === "https://hermes.example/" || url === "https://hermes.example") {
+        return new Response('window.__HERMES_SESSION_TOKEN__="dash-session-token";', { status: 200, headers: { "content-type": "text/html" } });
+      }
+      if (url.endsWith("/api/profiles")) return json(201, { ok: true, name: "fe-wu" });
+      if (url.endsWith("/api/sessions")) return json(201, { object: "hermes.session" });
+      throw new Error(url);
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.profile.hermes.sessionId, "ho-fe-wu");
+  const profilePosts = calls.filter((call) => call.url.endsWith("/api/profiles"));
+  assert.equal(profilePosts[0].session, "");
+  assert.equal(profilePosts[1].session, "dash-session-token");
+  assert.equal(JSON.stringify(result.profile).includes("dash-session-token"), false);
+  assert.equal(JSON.stringify(result.profile).includes("desk-token"), false);
+});
+
 test("secrets are redacted before an error is shown", () => {
   assert.equal(redactSecrets("bad key desk-token", settings).includes("desk-token"), false);
   assert.match(redactSecrets("Authorization: Bearer desk-token", settings), /\[redacted\]/);
