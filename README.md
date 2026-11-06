@@ -14,7 +14,7 @@ HarnessOffice is a game-like AI office. Roles such as HR and PM appear in a pixe
 
 ## 跑 Mock mode demo
 
-畫面分兩塊。瀏覽器是 Group Chat（Hire、核准、Mock PR）。像素辦公室是 [PixelOffice](https://github.com/KalebKE/PixelOffice) 的桌面視窗，授權是 Apache-2.0（見 [`vendor/README.md`](vendor/README.md)）。Chat 把 AgentEvent 轉送到同一台機器的 `127.0.0.1:3003`（HTTP）和 `127.0.0.1:9997`（UDP）。不會呼叫 Hermes、OpenCode，也不寫 GitHub。
+畫面分兩塊。瀏覽器是 Group Chat（Hire、核准、Mock PR）。像素辦公室是 [PixelOffice](https://github.com/KalebKE/PixelOffice) 的桌面視窗，授權是 Apache-2.0（見 [`vendor/README.md`](vendor/README.md)）。Chat 把 AgentEvent 轉送到同一台機器的 `127.0.0.1:3003`（HTTP）和 `127.0.0.1:9997`（UDP）。沒有 Hermes 設定時不會呼叫 Hermes。不會呼叫 OpenCode，也不寫 GitHub。
 
 PixelOffice 沒有 npm 套件。它是 submodule：
 
@@ -40,6 +40,24 @@ Bot profile 仍寫到 `~/harness-office-iac/bots/`。那個目錄不可寫時，
 
 行為測試：`npm test`
 
+## 接上 Hermes（仍不寫 GitHub、不啟動 OpenCode）
+
+Mock mode 仍是預設。Chat 與 3D 一起開：
+
+```bash
+npm install
+npm run spike:office:client
+./scripts/run-harness-office.sh
+```
+
+Chat 是 `http://127.0.0.1:4173`，3D 是 `http://127.0.0.1:4600`。`HOST` 預設 `0.0.0.0`，所以 Tailscale 打得到。`CHAT_PORT` 與 `VISUAL_PORT` 可改。
+
+在 chat 頁填 **API base**（只有來源，例如 `https://<你的 Hermes>`），不要在程式裡寫死 host。空著就繼續 Mock。設定與 Group Chat 紀錄在 `~/harness-office-iac/`（不能寫時在 repo 旁的隱藏檔），重開還在，憑證不進瀏覽器。
+
+路由、multiplex、為什麼不呼叫 `groups.send`，寫在 [`docs/hermes-settings.md`](docs/hermes-settings.md)。決定本身是 [ADR 0003](docs/adr/0003-hermes-settings-come-from-the-ui.md)。
+
+連得上且 multiplex 有開：Hire 建立 Bot profile 與穩定的 API session，`@Role` 走到 `chat/stream`，同一則文字出現在 Group Chat 和 3D 頭上。連不上是明示的 Mock。憑證錯誤、拒絕、毀損、取消都不會裝成成功。
+
 建議走一遍：PixelOffice 裡先看到 HR → 在 chat `@HR PM` 再按 Hire → 同樣 Hire Tech Lead、FE、BE → `@PM 做一個像素 Office` → 核准 Issue → `@Tech Lead 分派` → 播放寫程式動畫。動畫結束是一張沒有送出的 Mock PR，FE 與 BE 在 PixelOffice 裡變成 success。
 
 Skills 以可編輯複本裝在 [`.agents/skills/`](.agents/skills/)（Cursor 的 installer 路徑；清單在 [`skills-lock.json`](skills-lock.json)）。一次性設定寫在 [`AGENTS.md`](AGENTS.md)：
@@ -48,7 +66,7 @@ Skills 以可編輯複本裝在 [`.agents/skills/`](.agents/skills/)（Cursor �
 - Triage 標籤：[`docs/agents/triage-labels.md`](docs/agents/triage-labels.md)。
 - 領域文件：根目錄 [`GLOSSARY.md`](GLOSSARY.md)，ADR 放在 [`docs/adr/`](docs/adr/)。說明見 [`docs/README.md`](docs/README.md) 與 [`docs/agents/domain.md`](docs/agents/domain.md)。
 
-產品本體還沒有接上 Hermes 或 OpenCode。現在能跑的是上面的 Mock mode demo。授權見 [LICENSE](LICENSE)（GPL-3.0）。裝進來的 skills 來自 mattpocock/skills，保留其 MIT 授權（[`.agents/skills/LICENSE`](.agents/skills/LICENSE)）。
+沒有填 Hermes 設定時，跑的就是上面的 Mock mode。OpenCode 與 GitHub 寫入仍不在這一步。授權見 [LICENSE](LICENSE)（GPL-3.0）。裝進來的 skills 來自 mattpocock/skills，保留其 MIT 授權（[`.agents/skills/LICENSE`](.agents/skills/LICENSE)）。
 
 ## 3D spike（agent-office 視覺層）
 

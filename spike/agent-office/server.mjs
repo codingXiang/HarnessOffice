@@ -117,7 +117,12 @@ function listenPort(server) {
   return address && typeof address === "object" ? address.port : 4600;
 }
 
-export function createSpikeServer({ clientDist = defaultClientDist, office = createOffice() } = {}) {
+export function createSpikeServer({
+  clientDist = defaultClientDist,
+  office = createOffice(),
+  chatUrl = null,
+  chatFetch = globalThis.fetch,
+} = {}) {
   const peers = new Map();
   const sockets = new Set();
   let seq = 0;
@@ -128,6 +133,30 @@ export function createSpikeServer({ clientDist = defaultClientDist, office = cre
 
   function broadcast(msg, except) {
     for (const ws of sockets) if (ws !== except) send(ws, msg);
+  }
+
+  async function deliverSpectatorChat(ws, base, text) {
+    try {
+      const posted = await chatFetch(`${base}/api/session/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+        signal: AbortSignal.timeout(180000),
+      });
+      if (!posted.ok) {
+        send(ws, { t: "toast", text: "Group Chat 沒有收下這則。請改在 4173 送出。", level: "warn" });
+        return;
+      }
+      const visual = await chatFetch(`${base}/api/session/visual`, { signal: AbortSignal.timeout(4000) });
+      if (!visual.ok) {
+        send(ws, { t: "toast", text: "已送到 4173 的 Group Chat。這頁沒有刷到新內容。", level: "info" });
+        return;
+      }
+      const applied = office.applySession(await visual.json());
+      for (const item of applied.messages) broadcast(item);
+    } catch {
+      send(ws, { t: "toast", text: "送不到 Group Chat。這則沒有進對話。", level: "warn" });
+    }
   }
 
   const server = http.createServer(async (req, res) => {
@@ -171,13 +200,20 @@ export function createSpikeServer({ clientDist = defaultClientDist, office = cre
       }
       if (req.method === "POST" && url.pathname === "/api/spike/say") {
         const body = await readJson(req);
-        const result = office.say(body.role, body.text);
+        const result = office.say(body.role, body.text, { messageId: body.messageId, activity: body.activity });
         if (result.error) {
           sendJson(res, 400, { error: result.error });
           return;
         }
         for (const msg of result.messages) broadcast(msg);
-        sendJson(res, 200, { worker: result.worker, text: body.text });
+        sendJson(res, 200, { worker: result.worker, text: body.text, duplicate: !!result.duplicate });
+        return;
+      }
+      if (req.method === "POST" && url.pathname === "/api/spike/session") {
+        const body = await readJson(req);
+        const result = office.applySession(body);
+        for (const msg of result.messages) broadcast(msg);
+        sendJson(res, 200, { applied: result.messages.length, revision: body.revision ?? null });
         return;
       }
 
@@ -237,8 +273,21 @@ export function createSpikeServer({ clientDist = defaultClientDist, office = cre
         broadcast({ t: "peer.leave", id });
       });
       ws.on("error", () => ws.terminate());
-      send(ws, office.welcome(id, [...peers.values()], listenPort(server)));
-      broadcast({ t: "peer.join", peer }, ws);
+      const base = typeof chatUrl === "string" ? chatUrl.replace(/\/$/, "") : "";
+      const pulled = base
+        ? fetch(`${base}/api/session/visual`, { signal: AbortSignal.timeout(400) })
+            .then(async (response) => {
+              if (!response.ok) return;
+              const snapshot = await response.json();
+              const applied = office.applySession(snapshot);
+              for (const msg of applied.messages) broadcast(msg);
+            })
+            .catch(() => {})
+        : Promise.resolve();
+      pulled.then(() => {
+        send(ws, office.welcome(id, [...peers.values()], listenPort(server)));
+        broadcast({ t: "peer.join", peer }, ws);
+      });
       ws.on("message", (raw) => {
         let msg;
         try {
@@ -269,6 +318,17 @@ export function createSpikeServer({ clientDist = defaultClientDist, office = cre
           }
           return;
         }
+        if (msg.t === "chat") {
+          const text = typeof msg.text === "string" ? msg.text.trim().slice(0, 500) : "";
+          if (!text) return;
+          const base = typeof chatUrl === "string" ? chatUrl.replace(/\/$/, "") : "";
+          if (!base) {
+            send(ws, { t: "toast", text: "這個 3D 頁沒有接到 Group Chat。這則沒有送出。", level: "warn" });
+            return;
+          }
+          void deliverSpectatorChat(ws, base, text);
+          return;
+        }
         if (msg.t === "worker.spawn" || msg.t === "worker.prompt" || msg.t === "worker.pr") {
           send(ws, {
             t: "toast",
@@ -285,7 +345,7 @@ export function createSpikeServer({ clientDist = defaultClientDist, office = cre
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const { host, port } = spikeBind();
-  const server = createSpikeServer();
+  const server = createSpikeServer({ chatUrl: process.env.HARNESS_CHAT_URL ?? "http://127.0.0.1:4173" });
   server.listen(port, host, () => {
     const built = fs.existsSync(defaultClientDist);
     console.log(`HarnessOffice 3D spike http://${host}:${port}`);

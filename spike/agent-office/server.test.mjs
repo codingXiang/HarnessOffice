@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { WebSocket } from "ws";
 import { DEMO_STEPS } from "./demo.mjs";
+import { createOffice } from "./office.mjs";
 import { FLOOR_SPAWN, createSpikeServer, spikeBind } from "./server.mjs";
 
 function listen(server) {
@@ -34,6 +35,182 @@ async function until(messages, pred) {
   }
   throw new Error(`timed out waiting among ${messages.map((m) => m.t).join(",")}`);
 }
+
+test("a Group Chat snapshot is spoken once and a reconnect does not repeat it", async () => {
+  const server = createSpikeServer({ clientDist: null });
+  const port = await listen(server);
+  try {
+    const body = {
+      revision: 3,
+      lines: [{ id: "m-pm", role: "PM", text: "我先把驗收條件列出來。", activity: "idle" }],
+    };
+    const first = await fetch(`http://127.0.0.1:${port}/api/spike/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    assert.equal(first.status, 200);
+    const second = await fetch(`http://127.0.0.1:${port}/api/spike/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const repeated = await second.json();
+    assert.equal(repeated.applied, 0);
+    const client = connect(port);
+    await client.opened;
+    const welcome = await until(client.messages, (message) => message.t === "welcome");
+    const copies = welcome.chat.filter((line) => line.text === "我先把驗收條件列出來。");
+    assert.equal(copies.length, 1);
+    client.ws.terminate();
+  } finally {
+    await close(server);
+  }
+});
+
+test("a hired role with no reply of their own is still seated, and a later hire does not duplicate anyone", async () => {
+  const qaText = "fixture：我是何驗，這句不是上游模型。";
+  const hrText = "fixture：已 Hire 林可 擔任 PM。";
+  const present = {
+    revision: 4,
+    lines: [
+      { id: "m-hr", role: "HR", name: "HR", text: hrText, activity: "idle" },
+      { id: "m-qa", role: "QA", name: "何驗", text: qaText, activity: "idle" },
+    ],
+    roles: [
+      { role: "HR", name: "HR", text: hrText, activity: "idle" },
+      { role: "QA", name: "何驗", text: qaText, activity: "idle" },
+      { role: "PM", name: "林可", text: "", activity: "idle" },
+    ],
+  };
+  const office = createOffice();
+  office.applySession(present);
+  const ids = [...office.workers.values()].map((worker) => worker.id).sort();
+  assert.deepEqual(ids, ["role-hr", "role-pm", "role-qa"]);
+  const pm = office.workers.get("role-pm");
+  assert.equal(pm.deskId, "desk-2");
+  assert.equal(pm.name, "林可");
+  assert.equal(pm.task.name, "PM · 林可");
+  assert.match(pm.task.summary, /還沒有回覆/);
+  const qa = office.workers.get("role-qa");
+  assert.equal(qa.deskId, "desk-6");
+  assert.equal(qa.name, "何驗");
+  assert.equal(qa.task.name, "QA · 何驗");
+  assert.equal(qa.task.summary, qaText);
+  assert.equal(office.welcome("p1", [], 4600).chat.filter((line) => line.text === qaText).length, 1);
+  assert.equal(office.welcome("p1", [], 4600).chat.some((line) => line.text === pm.task.summary), false);
+  assert.equal(office.welcome("p1", [], 4600).plan.labels["desk-2"].text, "PM");
+  assert.equal(office.welcome("p1", [], 4600).plan.labels["desk-6"].text, "QA");
+  const replay = office.applySession(present);
+  assert.equal(replay.messages.length, 0);
+  assert.equal(office.workers.size, 3);
+
+  const growing = createOffice();
+  growing.applySession({
+    revision: 1,
+    lines: [
+      { id: "m-hr", role: "HR", name: "HR", text: hrText, activity: "idle" },
+      { id: "m-qa", role: "QA", name: "何驗", text: qaText, activity: "idle" },
+    ],
+    roles: [
+      { role: "HR", name: "HR", text: hrText, activity: "idle" },
+      { role: "QA", name: "何驗", text: qaText, activity: "idle" },
+    ],
+  });
+  assert.equal(growing.workers.size, 2);
+  const added = growing.applySession(present);
+  assert.equal(added.messages.some((message) => message.t === "worker.update" && message.worker.id === "role-pm"), true);
+  assert.equal(growing.workers.size, 3);
+  assert.equal(new Set([...growing.workers.keys()]).size, 3);
+  assert.equal(growing.applySession(present).messages.length, 0);
+  assert.equal(growing.welcome("p1", [], 4600).chat.filter((line) => line.text === qaText).length, 1);
+
+  const server = createSpikeServer({ clientDist: null });
+  const port = await listen(server);
+  let client;
+  try {
+    const seated = await fetch(`http://127.0.0.1:${port}/api/spike/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(present),
+    });
+    assert.equal(seated.status, 200);
+    await seated.json();
+    client = connect(port);
+    await client.opened;
+    const welcome = await until(client.messages, (message) => message.t === "welcome");
+    assert.deepEqual(welcome.workers.map((worker) => worker.id).slice().sort(), ["role-hr", "role-pm", "role-qa"]);
+    assert.equal(welcome.floors[0].workers, 3);
+    assert.equal(welcome.chat.filter((line) => line.text === qaText).length, 1);
+    const again = await fetch(`http://127.0.0.1:${port}/api/spike/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(present),
+    });
+    assert.equal((await again.json()).applied, 0);
+    client.ws.terminate();
+    const reconnect = connect(port);
+    try {
+      await reconnect.opened;
+      const back = await until(reconnect.messages, (message) => message.t === "welcome");
+      assert.deepEqual(back.workers.map((worker) => worker.id).slice().sort(), ["role-hr", "role-pm", "role-qa"]);
+      assert.equal(back.chat.filter((line) => line.text === qaText).length, 1);
+    } finally {
+      reconnect.ws.terminate();
+    }
+  } finally {
+    client?.ws.terminate();
+    await close(server);
+  }
+});
+
+test("typing in the 3D chat is forwarded to Group Chat, and a failure is a visible toast", async () => {
+  const calls = [];
+  const forwarded = createSpikeServer({
+    clientDist: null,
+    chatUrl: "http://chat.example",
+    chatFetch: async (url, init) => {
+      calls.push({ url: String(url), method: init?.method, body: init?.body });
+      if (String(url).endsWith("/api/session/messages")) {
+        return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({
+        revision: 1,
+        lines: [{ id: "m-hint", role: "系統", text: "請用 @Role 指定一位已經在 Office 裡的 Hermes Bot。", activity: "idle" }],
+        roles: [],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  const port = await listen(forwarded);
+  const client = connect(port);
+  try {
+    await client.opened;
+    client.ws.send(JSON.stringify({ t: "chat", text: "你好" }));
+    const line = await until(client.messages, (message) => message.t === "chat" && message.text.includes("請用 @Role"));
+    assert.equal(line.text.includes("請用 @Role"), true);
+    assert.equal(calls.some((call) => call.url === "http://chat.example/api/session/messages" && call.body.includes("你好")), true);
+    const dropped = createSpikeServer({
+      clientDist: null,
+      chatFetch: async () => {
+        throw new Error("should not call");
+      },
+    });
+    const droppedPort = await listen(dropped);
+    const other = connect(droppedPort);
+    try {
+      await other.opened;
+      other.ws.send(JSON.stringify({ t: "chat", text: "沒有送出" }));
+      const toast = await until(other.messages, (message) => message.t === "toast");
+      assert.match(toast.text, /沒有送出/);
+    } finally {
+      other.ws.terminate();
+      await close(dropped);
+    }
+  } finally {
+    client.ws.terminate();
+    await close(forwarded);
+  }
+});
 
 test("spike listens on 0.0.0.0 unless HOST is set", () => {
   assert.equal(spikeBind({}).host, "0.0.0.0");

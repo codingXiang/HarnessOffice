@@ -71,7 +71,8 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 
 textarea, label { display: block; width: 100%; }
-textarea {
+textarea, .settings input {
+  width: 100%;
   margin-top: 6px;
   background: #10160f;
   color: var(--ink);
@@ -79,6 +80,8 @@ textarea {
   padding: 8px;
   font: 16px/1.4 ui-monospace, monospace;
 }
+.settings label { margin-top: 10px; }
+main section + section { margin-top: 12px; }
 
 .issue, .pr { border: 1px dashed #4d6a46; padding: 10px; }
 .pr strong { color: var(--accent); }

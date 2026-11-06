@@ -82,7 +82,7 @@ export function requestCandidates(session, role) {
   return { session: next, candidates: options };
 }
 
-export function hire(session, candidateId, templates) {
+export function hire(session, candidateId, templates, options = {}) {
   const next = clone(session);
   const pending = next.pendingCandidates;
   const candidate = pending?.options.find((item) => item.id === candidateId) ?? null;
@@ -95,19 +95,31 @@ export function hire(session, candidateId, templates) {
     next.messages.push({ from: "system", text: `沒有 ${pending.role} 的 Hermes Bot profile 範本。` });
     return { session: next, profile: null };
   }
+  const createdBy = options.createdBy ?? "mock-hermes";
+  const reason = options.reason ?? "unconfigured";
   const profile = {
     ...structuredClone(template),
     displayName: candidate.displayName,
     candidateId: candidate.id,
-    createdBy: "mock-hermes",
+    createdBy,
   };
   next.present = [...next.present, pending.role];
   next.pendingCandidates = null;
   next.messages.push({
     from: "HR",
-    text: `已 Hire ${candidate.displayName} 擔任 ${pending.role}。Mock mode：由 Hermes 建立 Bot，OpenCode 沒有參與。`,
+    text: hireLine(candidate.displayName, pending.role, createdBy, reason),
   });
   return { session: next, profile };
+}
+
+function hireLine(displayName, role, createdBy, reason) {
+  if (createdBy === "hermes") {
+    return `已 Hire ${displayName} 擔任 ${role}。Hermes 已建立 Bot。OpenCode 沒有參與。`;
+  }
+  if (reason === "unreachable") {
+    return `已 Hire ${displayName} 擔任 ${role}。Mock mode：Hermes 連不上，這次沒有建立 Bot。OpenCode 沒有參與。`;
+  }
+  return `已 Hire ${displayName} 擔任 ${role}。Mock mode：由 Hermes 建立 Bot，OpenCode 沒有參與。`;
 }
 
 export function draftIssue(session, requestText) {
