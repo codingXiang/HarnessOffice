@@ -343,6 +343,12 @@ export function createOffice() {
     if (messages.some((message) => message.t === "worker.update")) {
       messages.push({ t: "plan", plan: floorView().plan });
     }
+    if (Array.isArray(snapshot?.issues)) {
+      messages.push({
+        t: "gh.issues",
+        state: { items: snapshot.issues, fetchedAt: Date.now(), loading: false },
+      });
+    }
     return { messages };
   }
 

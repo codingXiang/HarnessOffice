@@ -8,6 +8,7 @@ import {
   parseAddress,
   startMockCoding,
 } from "./office.mjs";
+import { commentBody, emptyGithubSettings, findOpencode, normalizeGithubSettings, opencodeCommand, parseGithubCommand, publishComment, pullRequestPlan } from "./github.mjs";
 import { hireWithHermes, normalizeSettings, redactSecrets, streamBotTurn } from "./hermes.mjs";
 
 function freshRecord() {
@@ -19,6 +20,7 @@ function freshRecord() {
     clientIds: {},
     activity: {},
     seq: 0,
+    github: { issues: [], assignments: {}, drafts: [], pulls: [], etag: null, progress: {} },
   };
 }
 
@@ -40,7 +42,7 @@ function interruptPending(record) {
   if (changed) record.revision += 1;
 }
 
-export function createOfficeRuntime({ templates, fetchImpl, loadSettings, onChange } = {}) {
+export function createOfficeRuntime({ templates, fetchImpl, loadSettings = () => ({}), loadGithub = emptyGithubSettings, onChange } = {}) {
   let record = freshRecord();
   const turns = new Map();
   const hiring = new Set();
@@ -62,8 +64,24 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings, onChan
         ]),
       ),
       activity: { ...record.activity },
+      github: {
+        issues: record.github?.issues ?? [],
+        assignments: record.github?.assignments ?? {},
+        drafts: (record.github?.drafts ?? []).filter((draft) => draft.status === "draft"),
+        pulls: record.github?.pulls ?? [],
+        progress: record.github?.progress ?? {},
+      },
       revision: record.revision,
     };
+  }
+
+  function ensureGithub() {
+    record.github ??= { issues: [], assignments: {}, drafts: [], pulls: [], etag: null, progress: {} };
+    record.github.issues ??= [];
+    record.github.assignments ??= {};
+    record.github.drafts ??= [];
+    record.github.pulls ??= [];
+    record.github.progress ??= {};
   }
 
   function boot(saved) {
@@ -73,6 +91,7 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings, onChan
     record.ownedProfiles ??= [];
     record.clientIds ??= {};
     record.activity ??= {};
+    record.github ??= { issues: [], assignments: {}, drafts: [], pulls: [], etag: null, progress: {} };
     record.seq ??= 0;
     record.revision ??= 0;
     interruptPending(record);
@@ -246,10 +265,150 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings, onChan
     return view();
   }
 
+  function setGithubIssues(issues, etag) {
+    ensureGithub();
+    record.github.issues = issues;
+    if (etag) record.github.etag = etag;
+    touch();
+    return view();
+  }
+
+  async function draftComment(number, role) {
+    ensureGithub();
+    const issue = record.github.issues.find((item) => item.number === number);
+    const id = `d${number}-${role}`;
+    const marker = `harness-office:${id}`;
+    const bot = record.bots[role];
+    if (!bot?.sessionId || bot.route !== "multiplex") {
+      record.office.messages.push({ from: "system", text: `${role} 還沒有 Hermes session，沒有寫 GitHub 草稿。` });
+      touch();
+      return;
+    }
+    const result = await streamBotTurn({
+      settings: loadSettings(),
+      profileName: bot.profileName,
+      sessionId: bot.sessionId,
+      input: `請為 GitHub issue #${number} ${issue?.title || ""} 寫一則簡短評論。不要說已經寫入 GitHub。`,
+      instructions: "這是草稿。不要呼叫 OpenCode，也不要宣稱已經寫入 GitHub。",
+      fetchImpl,
+    });
+    if (!result.ok || !result.text) {
+      record.office.messages.push({ from: "system", text: `${role} 沒有寫出 #${number} 的草稿。沒有發布到 GitHub。` });
+      touch();
+      return;
+    }
+    const draft = { id, number, role, body: result.text, marker, status: "draft" };
+    record.github.drafts = record.github.drafts.filter((item) => item.id !== id).concat(draft);
+    const settings = normalizeGithubSettings(loadGithub());
+    if (settings.autoPost) {
+      await publishDraft(id);
+      return;
+    }
+    record.office.messages.push({ from: "system", text: `${role} 寫了 #${number} 的草稿。按下「發布到 GitHub」才會送出。` });
+    touch();
+  }
+
+  async function publishDraft(id) {
+    ensureGithub();
+    const draft = record.github.drafts.find((item) => item.id === id && item.status === "draft");
+    if (!draft) return { ok: false, status: 404, session: view(), message: "沒有這份草稿。" };
+    const settings = normalizeGithubSettings(loadGithub());
+    if (!settings.token) {
+      note("尚未設定 GitHub token，草稿沒有送出。");
+      return { ok: false, status: 400, session: view(), message: "尚未設定 GitHub token，草稿沒有送出。" };
+    }
+    const bot = record.bots[draft.role];
+    const posted = await publishComment({
+      settings,
+      fetchImpl,
+      owner: settings.owner,
+      repo: settings.repo,
+      number: draft.number,
+      marker: draft.marker,
+      body: commentBody(draft.role, bot?.displayName, draft.body, draft.marker),
+    });
+    if (!posted.ok) {
+      note(`GitHub 沒有收下 #${draft.number} 的評論。${posted.detail || ""}`.trim());
+      return { ok: false, status: posted.status || 502, session: view(), message: "GitHub 沒有收下這則評論。" };
+    }
+    draft.status = "posted";
+    draft.url = posted.url;
+    record.office.messages.push({ from: "system", text: posted.duplicate ? `#${draft.number} 的評論已經在 GitHub 上。` : `已把 ${draft.role} 的評論發布到 #${draft.number}。` });
+    touch();
+    return { ok: true, session: view() };
+  }
+
+  function discardDraft(id) {
+    ensureGithub();
+    const draft = record.github.drafts.find((item) => item.id === id && item.status === "draft");
+    if (!draft) return { ok: false, status: 404, session: view(), message: "沒有這份草稿。" };
+    draft.status = "discarded";
+    note(`已捨棄 #${draft.number} 的草稿。沒有寫入 GitHub。`);
+    return { ok: true, session: view() };
+  }
+
+  async function openPullRequest(number) {
+    ensureGithub();
+    const existing = record.github.pulls.find((item) => item.issue === number && item.url);
+    if (existing) return { ok: true, duplicate: true, session: view(), message: `PR 已開：${existing.url}` };
+    const assignment = record.github.assignments[number];
+    if (!assignment) {
+      note(`#${number} 還沒有指派，沒有開 PR。`);
+      return { ok: false, status: 400, session: view(), message: `#${number} 還沒有指派，沒有開 PR。` };
+    }
+    record.github.progress[assignment.role] = "分析中";
+    touch();
+    const issue = record.github.issues.find((item) => item.number === number) || { number, title: assignment.title || `issue ${number}` };
+    const plan = pullRequestPlan(issue, "main");
+    if (!plan.ok) {
+      record.github.progress[assignment.role] = "失敗";
+      note(plan.detail);
+      return { ok: false, status: 400, session: view(), message: plan.detail };
+    }
+    const binary = findOpencode();
+    if (!binary) {
+      record.github.progress[assignment.role] = "失敗";
+      const message = "這台機器沒有 OpenCode（command -v opencode 找不到）。沒有建立 worktree，也沒有推分支。";
+      note(message);
+      return { ok: false, status: 400, session: view(), message };
+    }
+    record.github.progress[assignment.role] = "寫程式中";
+    touch();
+    record.github.pulls.push({ issue: number, branch: plan.branch, url: "", status: "等待確認", command: opencodeCommand("", issue) });
+    note(`OpenCode 會在隔離的 worktree 跑 ${plan.branch}。還沒有 push。`);
+    return { ok: true, session: view() };
+  }
+
   async function postMessage({ text, clientMessageId, wait = true }) {
     const body = String(text ?? "");
     if (!body.trim()) return { ok: false, status: 400, session: view() };
     if (clientMessageId && record.clientIds[clientMessageId]) return { ok: true, duplicate: true, session: view() };
+    const githubCommand = parseGithubCommand(body);
+    if (githubCommand?.type === "assign") {
+      ensureGithub();
+      if (!record.office.present.includes(githubCommand.role)) {
+        record.office.messages.push({ from: "human", text: body, addressed: githubCommand.by });
+        record.office.messages.push({ from: "system", text: `${githubCommand.role} 還不在 Office 裡。沒有指派 #${githubCommand.number}。` });
+        touch();
+        return { ok: true, session: view() };
+      }
+      const issue = record.github.issues.find((item) => item.number === githubCommand.number);
+      record.github.assignments[githubCommand.number] = {
+        number: githubCommand.number,
+        role: githubCommand.role,
+        title: issue?.title || `#${githubCommand.number}`,
+        url: issue?.url || "",
+      };
+      record.activity[githubCommand.role] = "working";
+      record.github.progress[githubCommand.role] = `working on #${githubCommand.number}`;
+      record.office.messages.push({ from: "human", text: body, addressed: githubCommand.by });
+      record.office.messages.push({ from: "system", text: `已把 #${githubCommand.number} 交給 ${githubCommand.role}。` });
+      if (clientMessageId) record.clientIds[clientMessageId] = "github";
+      touch();
+      const drafting = draftComment(githubCommand.number, githubCommand.role);
+      if (wait) await drafting;
+      return { ok: true, session: view() };
+    }
     const parsed = parseAddress(body);
     const hireName = parsed?.role === "HR" ? parsed.body.match(/^雇用\s+(.+)$/)?.[1]?.trim() : "";
     if (hireName && record.office.pendingCandidates) {
@@ -309,6 +468,10 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings, onChan
     view,
     hireCandidate,
     postMessage,
+    setGithubIssues,
+    publishDraft,
+    discardDraft,
+    openPullRequest,
     cancel,
     approve: () => mutate(approveIssue),
     hold: () => mutate(holdIssue),
@@ -335,13 +498,20 @@ export function visualSnapshot(sessionView) {
     lines.push({ id: message.id, role, name: names[role] || role, text: message.text, activity, delivery: message.delivery || "" });
   }
   const roles = office.present.map((role) => {
+    const assignment = Object.values(sessionView.github?.assignments ?? {}).find((item) => item.role === role);
     const last = [...lines].reverse().find((line) => line.role === role);
     return {
       role,
       name: names[role] || role,
-      activity: sessionView.activity?.[role] || "idle",
-      text: last?.text ?? "",
+      activity: assignment ? "working" : (sessionView.activity?.[role] || "idle"),
+      text: assignment ? `working on #${assignment.number}` : (last?.text ?? ""),
+      progress: sessionView.github?.progress?.[role] || "",
     };
   });
-  return { revision: sessionView.revision, lines: lines.slice(-40), roles };
+  return {
+    revision: sessionView.revision,
+    lines: lines.slice(-40),
+    roles,
+    issues: sessionView.github?.issues ?? [],
+  };
 }

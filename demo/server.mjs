@@ -3,6 +3,7 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isConfigured, probeHermes, hireWithHermes, redactSecrets } from "./hermes.mjs";
+import { fetchIssues, loadGithubSettings, publicGithubSettings, resolveGithubFile, saveGithubSettings, testGithubConnection } from "./github.mjs";
 import { loadHermesSettings, publicHermesSettings, resolveHermesSettingsFile, saveHermesSettings } from "./hermes-settings.mjs";
 import { resolveIacDir, writeProfile } from "./iac.mjs";
 import { isAgentEvent } from "./pixel-office-events.mjs";
@@ -95,6 +96,8 @@ export function createServer({
   pixelOffice = createPixelOfficeForwarder(),
   hermesFile = null,
   hermesFetch = globalThis.fetch,
+  githubFile = null,
+  githubFetch = globalThis.fetch,
   sessionFile = null,
   visualSink = null,
 } = {}) {
@@ -126,6 +129,7 @@ export function createServer({
   const runtime = createOfficeRuntime({
     templates,
     fetchImpl: hermesFetch,
+    loadGithub: () => loadGithubSettings(githubFile),
     loadSettings: () => {
       try {
         return loadHermesSettings(hermesFile);
@@ -157,6 +161,7 @@ export function createServer({
     }
   }
 
+  let lastGithubPoll = 0;
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     try {
@@ -298,6 +303,58 @@ export function createServer({
         sendJson(res, result.ok ? 200 : result.status ?? 400, result.session ?? { error: "bad-request" });
         return;
       }
+      if (req.method === "GET" && url.pathname === "/api/github") {
+        sendJson(res, 200, publicGithubSettings(loadGithubSettings(githubFile)));
+        return;
+      }
+      if (req.method === "PUT" && url.pathname === "/api/github") {
+        const body = await readJson(req);
+        if (!githubFile) {
+          sendJson(res, 500, { message: "GitHub 設定檔沒有位置。" });
+          return;
+        }
+        sendJson(res, 200, saveGithubSettings(githubFile, body));
+        return;
+      }
+      if (req.method === "POST" && url.pathname === "/api/github/test") {
+        const result = await testGithubConnection(loadGithubSettings(githubFile), githubFetch);
+        sendJson(res, result.ok ? 200 : 502, result);
+        return;
+      }
+      if (req.method === "POST" && url.pathname === "/api/github/refresh") {
+        const settings = loadGithubSettings(githubFile);
+        if (!url.searchParams.has("manual") && Date.now() - lastGithubPoll < settings.pollSeconds * 1000) {
+          sendJson(res, 200, runtime.view());
+          return;
+        }
+        lastGithubPoll = Date.now();
+        const result = await fetchIssues({ settings, fetchImpl: githubFetch, etag: runtime.snapshot().github?.etag });
+        if (!result.ok) {
+          sendJson(res, 502, { message: result.detail || "GitHub 沒有列出 issues。" });
+          return;
+        }
+        if (!result.notModified) runtime.setGithubIssues(result.issues, result.etag);
+        sendJson(res, 200, runtime.view());
+        return;
+      }
+      if (req.method === "POST" && url.pathname.startsWith("/api/github/drafts/") && url.pathname.endsWith("/publish")) {
+        const id = decodeURIComponent(url.pathname.slice("/api/github/drafts/".length, -"/publish".length));
+        const result = await runtime.publishDraft(id);
+        sendJson(res, result.ok ? 200 : result.status ?? 400, { ...(result.session ?? {}), message: result.message });
+        return;
+      }
+      if (req.method === "POST" && url.pathname.startsWith("/api/github/drafts/") && url.pathname.endsWith("/discard")) {
+        const id = decodeURIComponent(url.pathname.slice("/api/github/drafts/".length, -"/discard".length));
+        const result = runtime.discardDraft(id);
+        sendJson(res, result.ok ? 200 : result.status ?? 400, { ...(result.session ?? {}), message: result.message });
+        return;
+      }
+      if (req.method === "POST" && /^\/api\/github\/issues\/\d+\/pr$/.test(url.pathname)) {
+        const number = Number(url.pathname.split("/")[4]);
+        const result = await runtime.openPullRequest(number);
+        sendJson(res, result.ok ? 200 : result.status ?? 400, { ...(result.session ?? {}), message: result.message });
+        return;
+      }
       if (req.method === "POST" && url.pathname === "/api/session/hire") {
         const body = await readJson(req);
         const result = await runtime.hireCandidate(body.candidateId);
@@ -379,11 +436,13 @@ export function createServer({
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const iac = resolveIacDir({ cwd: demoRoot });
   const hermes = resolveHermesSettingsFile({ cwd: demoRoot });
+  const githubFile = resolveGithubFile({ cwd: demoRoot });
   const { host, port } = demoBind();
   const visualBase = process.env.HARNESS_VISUAL_URL ?? "http://127.0.0.1:4600";
   const server = createServer({
     iac,
     hermesFile: hermes.file,
+    githubFile,
     visualSink: async (snapshot) => {
       await fetch(`${visualBase}/api/spike/session`, {
         method: "POST",
@@ -404,5 +463,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.log(`${hermesNote}。設定檔：${hermes.file}${hermes.fallback ? " (fallback)" : ""}`);
     console.log("PixelOffice events: HTTP http://127.0.0.1:3003/api/events and UDP 127.0.0.1:9997");
     console.log(`IaC store: ${iac.dir}${iac.fallback ? " (fallback)" : ""}`);
+    setInterval(() => {
+      const settings = loadGithubSettings(githubFile);
+      if (!settings.token) return;
+      fetch(`http://127.0.0.1:${port}/api/github/refresh`, { method: "POST" }).catch(() => {});
+    }, 15000);
   });
 }

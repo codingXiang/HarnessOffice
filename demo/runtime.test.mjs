@@ -224,3 +224,17 @@ test("a live turn can be accepted before Hermes replies", async () => {
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(runtime.view().office.messages.at(-1).text, "fixture：回覆還在路上。");
 });
+
+test("assigning a fixture issue does not invent a GitHub comment", async () => {
+  const runtime = createOfficeRuntime({ templates });
+  runtime.boot(null);
+  await runtime.postMessage({ text: "@HR 請幫我 hire FE" });
+  await runtime.hireCandidate("fe-wu");
+  runtime.setGithubIssues([{ number: 12, title: "fixture：看板", url: "https://github.com/codingXiang/HarnessOffice/issues/12" }], "W/\"fixture\"");
+  const assigned = await runtime.postMessage({ text: "@FE 看一下 #12" });
+  assert.equal(assigned.session.github.assignments[12].role, "FE");
+  assert.match(assigned.session.office.messages.at(-1).text, /沒有寫 GitHub 草稿/);
+  const shot = visualSnapshot(assigned.session);
+  assert.equal(shot.roles.find((role) => role.role === "FE").text, "working on #12");
+  assert.equal(shot.issues[0].number, 12);
+});

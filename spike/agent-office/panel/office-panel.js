@@ -6,6 +6,7 @@ root.innerHTML = `
     <button type="button" id="ho-settings-toggle">Hermes 設定</button>
   </div>
   <p class="ho-roles" id="ho-roles">正在讀取角色…</p>
+  <div id="ho-github"></div>
   <ol class="ho-log" id="ho-log"></ol>
   <div class="ho-candidates" id="ho-candidates"></div>
   <form id="ho-composer">
@@ -23,6 +24,17 @@ root.innerHTML = `
     <label>provider <input id="ho-provider" type="text" autocomplete="off" /></label>
     <label>model <input id="ho-model" type="text" autocomplete="off" /></label>
     <label>Group Chat 名稱 <input id="ho-group" type="text" autocomplete="off" /></label>
+    <label>GitHub owner/repo <input id="ho-gh-repo" type="text" autocomplete="off" placeholder="codingXiang/HarnessOffice" /></label>
+    <label>GitHub token（留白不改） <input id="ho-gh-token" type="password" autocomplete="off" /></label>
+    <label>Issue 輪詢秒數 <input id="ho-gh-poll" type="number" min="15" max="600" /></label>
+    <label>標籤對應 role（JSON） <input id="ho-gh-labels" type="text" autocomplete="off" /></label>
+    <label><input id="ho-gh-auto" type="checkbox" /> 評論自動發布到 GitHub（預設關閉）</label>
+    <div class="ho-row">
+      <button type="button" id="ho-gh-save">儲存 GitHub</button>
+      <button type="button" id="ho-gh-test">測試連線</button>
+      <button type="button" id="ho-gh-refresh">重新整理 issues</button>
+    </div>
+    <p class="ho-status" id="ho-gh-status"></p>
     <div class="ho-row">
       <button type="submit">儲存設定</button>
       <button type="button" id="ho-probe">檢查連線</button>
@@ -80,7 +92,8 @@ function render() {
   roles.textContent = (office.present ?? []).map((role) => {
     const name = bots[role]?.displayName && bots[role].displayName !== role ? `${role} ${bots[role].displayName}` : role;
     const state = activity[role] === "working" ? "處理中" : activity[role] === "waiting" ? "等待" : "在場";
-    return `${name} · ${state}`;
+    const progress = confirmed?.github?.progress?.[role];
+    return `${name} · ${state}${progress ? ` · ${progress}` : ""}`;
   }).join("  ") || "還沒有角色";
   log.replaceChildren();
   for (const message of office.messages ?? []) {
@@ -130,6 +143,61 @@ function render() {
     ? `按下 Hire 就建立 ${pending.role} 的 Hermes Bot。`
     : "請先 @HR 提出 Candidate，例如 @HR 請幫我 hire FE。";
   candidates.append(hireButton, hireHint);
+  renderGithub(confirmed?.github);
+}
+
+function renderGithub(github) {
+  const box = root.querySelector("#ho-github");
+  box.replaceChildren();
+  const issues = github?.issues ?? [];
+  if (issues.length === 0 && !(github?.drafts ?? []).length) return;
+  const title = document.createElement("p");
+  title.className = "ho-status";
+  title.textContent = "GitHub issues";
+  box.append(title);
+  for (const issue of issues) {
+    const row = document.createElement("p");
+    const link = document.createElement("a");
+    link.href = issue.url;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    link.textContent = `#${issue.number} ${issue.title}`;
+    row.append(link);
+    if (issue.role) row.append(document.createTextNode(` · ${issue.role}`));
+    box.append(row);
+  }
+  for (const draft of github?.drafts ?? []) {
+    const row = document.createElement("div");
+    const text = document.createElement("p");
+    text.textContent = `${draft.role} 的 #${draft.number} 草稿：${draft.body}`;
+    const publish = document.createElement("button");
+    publish.type = "button";
+    publish.textContent = "發布到 GitHub";
+    publish.addEventListener("click", () => githubAction(`/api/office/github/drafts/${encodeURIComponent(draft.id)}/publish`));
+    const discard = document.createElement("button");
+    discard.type = "button";
+    discard.textContent = "捨棄";
+    discard.addEventListener("click", () => githubAction(`/api/office/github/drafts/${encodeURIComponent(draft.id)}/discard`));
+    const pr = document.createElement("button");
+    pr.type = "button";
+    pr.textContent = "開 PR";
+    pr.addEventListener("click", () => githubAction(`/api/office/github/issues/${draft.number}/pr`));
+    row.append(text, publish, discard, pr);
+    box.append(row);
+  }
+}
+
+async function githubAction(path) {
+  sendStatus.textContent = "處理中";
+  try {
+    const response = await withTimeout(() => fetch(path, { method: "POST", cache: "no-store" }), 20000);
+    const payload = await response.json().catch(() => ({}));
+    if (payload?.office) adopt(payload);
+    else await readSession();
+    sendStatus.textContent = payload.message || (response.ok ? "" : "GitHub 沒有完成這一步。");
+  } catch {
+    sendStatus.textContent = "GitHub 沒有在時間內完成。";
+  }
 }
 
 function adopt(session) {
@@ -402,6 +470,56 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") readSession().catch(() => {});
 });
 
+async function loadGithub() {
+  const response = await fetch("/api/office/github", { cache: "no-store" });
+  const payload = await response.json();
+  if (!response.ok) return;
+  root.querySelector("#ho-gh-repo").value = `${payload.owner || "codingXiang"}/${payload.repo || "HarnessOffice"}`;
+  root.querySelector("#ho-gh-poll").value = payload.pollSeconds || 60;
+  root.querySelector("#ho-gh-labels").value = JSON.stringify(payload.labels || {});
+  root.querySelector("#ho-gh-auto").checked = payload.autoPost === true;
+  root.querySelector("#ho-gh-token").value = "";
+  root.querySelector("#ho-gh-status").textContent = payload.configured ? "GitHub 已設定。token 只在伺服器上。" : "尚未設定 GitHub token。";
+}
+
+root.querySelector("#ho-gh-save").addEventListener("click", async () => {
+  const [owner, repo] = root.querySelector("#ho-gh-repo").value.split("/");
+  let labels = {};
+  try {
+    labels = JSON.parse(root.querySelector("#ho-gh-labels").value || "{}");
+  } catch {
+    root.querySelector("#ho-gh-status").textContent = "標籤對應不是 JSON。";
+    return;
+  }
+  const response = await fetch("/api/office/github", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    cache: "no-store",
+    body: JSON.stringify({
+      owner: (owner || "").trim(),
+      repo: (repo || "").trim(),
+      token: root.querySelector("#ho-gh-token").value,
+      pollSeconds: Number(root.querySelector("#ho-gh-poll").value),
+      autoPost: root.querySelector("#ho-gh-auto").checked,
+      labels,
+    }),
+  });
+  const payload = await response.json();
+  root.querySelector("#ho-gh-token").value = "";
+  root.querySelector("#ho-gh-status").textContent = payload.configured ? "已儲存。token 不會回到這個頁面。" : (payload.message || "已儲存，尚未設定 token。");
+});
+
+root.querySelector("#ho-gh-test").addEventListener("click", async () => {
+  root.querySelector("#ho-gh-status").textContent = "正在測試 GitHub…";
+  const response = await fetch("/api/office/github/test", { method: "POST", cache: "no-store" });
+  const payload = await response.json().catch(() => ({}));
+  root.querySelector("#ho-gh-status").textContent = payload.fullName
+    ? `${payload.fullName} · ${JSON.stringify(payload.permissions || {})}`
+    : (payload.detail || "GitHub 連線沒有完成。");
+});
+
+root.querySelector("#ho-gh-refresh").addEventListener("click", () => githubAction("/api/office/github/refresh"));
+
 function watchBuild() {
   const loaded = document.querySelector('meta[name="ho-build"]')?.content || "";
   if (!loaded) return;
@@ -437,4 +555,7 @@ readSession().catch(() => {
 watchBuild();
 loadSettings().catch(() => {
   settingsStatus.textContent = "讀不到 Hermes 設定。";
+});
+loadGithub().catch(() => {
+  root.querySelector("#ho-gh-status").textContent = "讀不到 GitHub 設定。";
 });

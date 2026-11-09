@@ -342,6 +342,26 @@ export function createSpikeServer({
         await proxyChat(res, "/api/hermes", { method: "PUT", body: await readJson(req), redact: true });
         return;
       }
+      if (req.method === "GET" && url.pathname === "/api/office/github") {
+        await proxyChat(res, "/api/github", { redact: true });
+        return;
+      }
+      if (req.method === "PUT" && url.pathname === "/api/office/github") {
+        await proxyChat(res, "/api/github", { method: "PUT", body: await readJson(req), redact: true });
+        return;
+      }
+      if (req.method === "POST" && url.pathname === "/api/office/github/test") {
+        await proxyChat(res, "/api/github/test", { method: "POST", timeoutMs: 20000, redact: true });
+        return;
+      }
+      if (req.method === "POST" && url.pathname === "/api/office/github/refresh") {
+        await proxyChat(res, "/api/github/refresh?manual=1", { method: "POST", timeoutMs: 20000 });
+        return;
+      }
+      if (req.method === "POST" && url.pathname.startsWith("/api/office/github/")) {
+        await proxyChat(res, url.pathname.replace("/api/office/github/", "/api/github/"), { method: "POST", timeoutMs: 20000 });
+        return;
+      }
       if (req.method === "POST" && url.pathname === "/api/office/hermes/probe") {
         await proxyChat(res, "/api/hermes/probe", { method: "POST", redact: true });
         return;
