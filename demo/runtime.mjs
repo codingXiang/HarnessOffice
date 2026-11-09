@@ -308,10 +308,14 @@ export function visualSnapshot(sessionView) {
   }
   const lines = [];
   for (const message of office.messages) {
-    if (!message.text || message.from === "human") continue;
+    if (!message.text) continue;
+    if (message.from === "human") {
+      lines.push({ id: message.id, role: "你", name: "你", text: message.text, activity: "idle", delivery: message.delivery || "done" });
+      continue;
+    }
     const role = message.from === "system" ? "系統" : message.from;
     const activity = sessionView.activity?.[role] || (message.delivery === "pending" ? "working" : "idle");
-    lines.push({ id: message.id, role, name: names[role] || role, text: message.text, activity });
+    lines.push({ id: message.id, role, name: names[role] || role, text: message.text, activity, delivery: message.delivery || "" });
   }
   const roles = office.present.map((role) => {
     const last = [...lines].reverse().find((line) => line.role === role);

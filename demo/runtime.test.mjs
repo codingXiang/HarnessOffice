@@ -80,6 +80,7 @@ test("a live message is delivered to that bot session and the visual line is the
   const shot = visualSnapshot(replied.session);
   assert.equal(shot.lines.at(-1).text, "我先把驗收條件列出來。");
   assert.equal(shot.lines.at(-1).name, "林可");
+  assert.equal(shot.lines.some((line) => line.role === "你" && line.text.includes("@PM")), true);
   assert.equal(shot.roles.find((role) => role.role === "PM").text, "我先把驗收條件列出來。");
   const envWrite = calls.find((call) => call.url.endsWith("/api/env") && call.method === "PUT");
   const sessionOpen = calls.find((call) => call.url.endsWith("/api/sessions") && call.method === "POST");

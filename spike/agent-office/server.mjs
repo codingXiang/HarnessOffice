@@ -53,6 +53,15 @@ function sendJson(res, status, body) {
   res.end(payload);
 }
 
+const panelDir = path.join(spikeRoot, "panel");
+
+export function withOfficePanel(html) {
+  const tags = `<link rel="stylesheet" href="/office-panel.css"><script type="module" src="/office-panel.js"></script>`;
+  const source = String(html);
+  if (source.includes("</body>")) return source.replace("</body>", `${tags}</body>`);
+  return `${source}${tags}`;
+}
+
 function sendText(res, status, body, type) {
   res.writeHead(status, {
     "content-type": type,
@@ -135,6 +144,62 @@ export function createSpikeServer({
     for (const ws of sockets) if (ws !== except) send(ws, msg);
   }
 
+  function chatBase() {
+    return typeof chatUrl === "string" ? chatUrl.replace(/\/$/, "") : "";
+  }
+
+  async function refreshVisual() {
+    const base = chatBase();
+    if (!base) return;
+    try {
+      const visual = await chatFetch(`${base}/api/session/visual`, { signal: AbortSignal.timeout(4000) });
+      if (!visual.ok) return;
+      const applied = office.applySession(await visual.json());
+      for (const item of applied.messages) broadcast(item);
+    } catch {
+      // The panel still shows the session the chat server returned.
+    }
+  }
+
+  function redactSecrets(bodyText) {
+    try {
+      const json = JSON.parse(bodyText);
+      if (json && typeof json === "object" && !Array.isArray(json)) {
+        delete json.token;
+        delete json.dashboardToken;
+      }
+      return JSON.stringify(json);
+    } catch {
+      return bodyText;
+    }
+  }
+
+  async function proxyChat(res, targetPath, { method = "GET", body = null, timeoutMs = 8000, redact = false, refresh = false } = {}) {
+    const base = chatBase();
+    if (!base) {
+      sendJson(res, 503, { error: "chat-unavailable", message: "這個 Office 頁沒有接到 Group Chat。" });
+      return;
+    }
+    try {
+      const response = await chatFetch(`${base}${targetPath}`, {
+        method,
+        headers: body ? { "content-type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      let payload = await response.text();
+      if (redact) payload = redactSecrets(payload);
+      if (refresh && response.ok) await refreshVisual();
+      res.writeHead(response.status, {
+        "content-type": response.headers.get("content-type") || "application/json; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      res.end(payload);
+    } catch {
+      sendJson(res, 502, { error: "chat-unreachable", message: "送不到 Group Chat。這則沒有進對話。" });
+    }
+  }
+
   async function deliverSpectatorChat(ws, base, text) {
     try {
       const posted = await chatFetch(`${base}/api/session/messages`, {
@@ -144,12 +209,12 @@ export function createSpikeServer({
         signal: AbortSignal.timeout(180000),
       });
       if (!posted.ok) {
-        send(ws, { t: "toast", text: "Group Chat 沒有收下這則。請改在 4173 送出。", level: "warn" });
+        send(ws, { t: "toast", text: "Group Chat 沒有收下這則。", level: "warn" });
         return;
       }
       const visual = await chatFetch(`${base}/api/session/visual`, { signal: AbortSignal.timeout(4000) });
       if (!visual.ok) {
-        send(ws, { t: "toast", text: "已送到 4173 的 Group Chat。這頁沒有刷到新內容。", level: "info" });
+        send(ws, { t: "toast", text: "已送到 Group Chat。這頁沒有刷到新的頭上文字。", level: "info" });
         return;
       }
       const applied = office.applySession(await visual.json());
@@ -216,6 +281,69 @@ export function createSpikeServer({
         sendJson(res, 200, { applied: result.messages.length, revision: body.revision ?? null });
         return;
       }
+      if (req.method === "GET" && (url.pathname === "/office-panel.js" || url.pathname === "/office-panel.css")) {
+        const file = path.join(panelDir, path.basename(url.pathname));
+        if (!fs.existsSync(file)) {
+          sendJson(res, 404, { error: "not-found" });
+          return;
+        }
+        sendText(res, 200, fs.readFileSync(file, "utf8"), url.pathname.endsWith(".css") ? "text/css; charset=utf-8" : "text/javascript; charset=utf-8");
+        return;
+      }
+      if (req.method === "GET" && url.pathname === "/api/office/session") {
+        await proxyChat(res, "/api/session");
+        return;
+      }
+      if (req.method === "POST" && url.pathname === "/api/office/messages") {
+        await proxyChat(res, "/api/session/messages", { method: "POST", body: await readJson(req), timeoutMs: 180000, refresh: true });
+        return;
+      }
+      if (req.method === "POST" && url.pathname === "/api/office/hire") {
+        await proxyChat(res, "/api/session/hire", { method: "POST", body: await readJson(req), timeoutMs: 180000, refresh: true });
+        return;
+      }
+      if (req.method === "GET" && url.pathname === "/api/office/hermes") {
+        await proxyChat(res, "/api/hermes", { redact: true });
+        return;
+      }
+      if (req.method === "PUT" && url.pathname === "/api/office/hermes") {
+        await proxyChat(res, "/api/hermes", { method: "PUT", body: await readJson(req), redact: true });
+        return;
+      }
+      if (req.method === "POST" && url.pathname === "/api/office/hermes/probe") {
+        await proxyChat(res, "/api/hermes/probe", { method: "POST", redact: true });
+        return;
+      }
+      if (req.method === "GET" && url.pathname === "/api/office/events") {
+        const base = chatBase();
+        if (!base) {
+          sendJson(res, 503, { error: "chat-unavailable", message: "這個 Office 頁沒有接到 Group Chat。" });
+          return;
+        }
+        try {
+          const upstream = await chatFetch(`${base}/api/session/events`, { headers: { accept: "text/event-stream" } });
+          res.writeHead(upstream.status, {
+            "content-type": "text/event-stream; charset=utf-8",
+            "cache-control": "no-cache",
+          });
+          if (!upstream.body) {
+            res.end();
+            return;
+          }
+          const reader = upstream.body.getReader();
+          req.on("close", () => reader.cancel().catch(() => {}));
+          while (true) {
+            const step = await reader.read();
+            if (step.done) break;
+            res.write(Buffer.from(step.value));
+          }
+          res.end();
+        } catch {
+          if (!res.headersSent) sendJson(res, 502, { error: "chat-unreachable", message: "送不到 Group Chat。" });
+          else res.end();
+        }
+        return;
+      }
 
       if (!clientDist || !fs.existsSync(clientDist)) {
         if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
@@ -238,7 +366,8 @@ export function createSpikeServer({
         sendJson(res, 404, { error: "not-found" });
         return;
       }
-      const body = fs.readFileSync(target);
+      const fileBody = fs.readFileSync(target);
+      const body = path.basename(target) === "index.html" ? Buffer.from(withOfficePanel(fileBody.toString("utf8"))) : fileBody;
       res.writeHead(200, {
         "content-type": MIME[path.extname(target)] ?? "application/octet-stream",
         "content-length": body.length,

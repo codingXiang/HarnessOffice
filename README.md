@@ -50,7 +50,7 @@ npm run spike:office:client
 ./scripts/run-harness-office.sh
 ```
 
-Chat 是 `http://127.0.0.1:4173`，3D 是 `http://127.0.0.1:4600`。`HOST` 預設 `0.0.0.0`，所以 Tailscale 打得到。`CHAT_PORT` 與 `VISUAL_PORT` 可改。
+主頁是 `http://127.0.0.1:4600/?view=spectator`。對話、Hire、Hermes 設定都在這一頁。`http://127.0.0.1:4173` 仍是同一份 Group Chat 的後台頁，不必打開。`HOST` 預設 `0.0.0.0`，所以 Tailscale 打得到同一個 `/?view=spectator`。`CHAT_PORT` 與 `VISUAL_PORT` 可改。
 
 在 chat 頁填 **API base**（只有來源，例如 `https://<你的 Hermes>`），不要在程式裡寫死 host。空著就繼續 Mock。設定與 Group Chat 紀錄在 `~/harness-office-iac/`（不能寫時在 repo 旁的隱藏檔），重開還在，憑證不進瀏覽器。
 

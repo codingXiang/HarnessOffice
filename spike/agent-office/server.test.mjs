@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 import { WebSocket } from "ws";
 import { DEMO_STEPS } from "./demo.mjs";
 import { createOffice } from "./office.mjs";
-import { FLOOR_SPAWN, createSpikeServer, spikeBind } from "./server.mjs";
+import { FLOOR_SPAWN, createSpikeServer, spikeBind, withOfficePanel } from "./server.mjs";
 
 function listen(server) {
   return new Promise((resolve) => {
@@ -209,6 +210,75 @@ test("typing in the 3D chat is forwarded to Group Chat, and a failure is a visib
   } finally {
     client.ws.terminate();
     await close(forwarded);
+  }
+});
+
+test("the office page is the chat client and does not return a Hermes secret", async () => {
+  assert.match(withOfficePanel("<html><body></body></html>"), /office-panel\.js/);
+  const panel = fs.readFileSync(new URL("./panel/office-panel.js", import.meta.url), "utf8");
+  assert.match(panel, /event\.key !== "Enter"/);
+  assert.match(panel, /送出中…/);
+  assert.equal(panel.includes("localStorage"), false);
+  const calls = [];
+  const server = createSpikeServer({
+    clientDist: null,
+    chatUrl: "http://chat.example",
+    chatFetch: async (url, init) => {
+      calls.push({ url: String(url), body: init?.body });
+      if (String(url).endsWith("/api/hermes")) {
+        return new Response(JSON.stringify({ configured: true, token: "desk-token", tokenSet: true, apiBase: "https://hermes.example" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (String(url).endsWith("/api/session/visual")) {
+        return new Response(JSON.stringify({ revision: 2, lines: [{ id: "m-hint", role: "系統", text: "fixture：請用 @Role。", activity: "idle" }], roles: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        office: {
+          present: ["HR", "QA"],
+          messages: [
+            { id: "m1", from: "human", text: "fixture：你好", delivery: "done" },
+            { id: "m2", from: "system", text: "請用 @Role 指定一位已經在 Office 裡的 Hermes Bot。", delivery: "done" },
+          ],
+        },
+        runtime: { state: "mock" },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  const port = await listen(server);
+  try {
+    const said = await fetch(`http://127.0.0.1:${port}/api/office/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: "fixture：你好" }),
+    });
+    const saidBody = await said.json();
+    assert.equal(said.status, 200);
+    assert.equal(saidBody.office.messages[0].text, "fixture：你好");
+    assert.equal(calls.some((call) => call.url.endsWith("/api/session/messages") && call.body.includes("fixture：你好")), true);
+    const settings = await fetch(`http://127.0.0.1:${port}/api/office/hermes`);
+    const settingsText = await settings.text();
+    assert.equal(settings.status, 200);
+    assert.equal(settingsText.includes("desk-token"), false);
+    assert.match(settingsText, /tokenSet/);
+    const script = await (await fetch(`http://127.0.0.1:${port}/office-panel.js`)).text();
+    assert.match(script, /\/api\/office\/hire/);
+  } finally {
+    await close(server);
+  }
+
+  const bare = createSpikeServer({ clientDist: null });
+  const barePort = await listen(bare);
+  try {
+    const missing = await fetch(`http://127.0.0.1:${barePort}/api/office/session`);
+    assert.equal(missing.status, 503);
+    assert.match((await missing.json()).message, /沒有接到 Group Chat/);
+  } finally {
+    await close(bare);
   }
 });
 
