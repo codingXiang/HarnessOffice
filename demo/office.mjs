@@ -45,14 +45,93 @@ export function createSession() {
   };
 }
 
-export function parseAddress(text) {
-  const match = String(text).trim().match(/^@(Tech Lead|HR|PM|FE|BE|QA)(?:\s+|$)([\s\S]*)$/);
-  if (!match) return null;
-  return { role: match[1], body: match[2].trim() };
+const ROLE_ALIASES = [
+  { role: "Tech Lead", phrases: ["tech lead", "techlead", "tech-lead", "技術主管", "技術負責人"] },
+  { role: "FE", phrases: ["前端", "frontend", "front-end", "front end", "fe"] },
+  { role: "BE", phrases: ["後端", "backend", "back-end", "back end", "be"] },
+  { role: "PM", phrases: ["產品經理", "pm"] },
+  { role: "QA", phrases: ["測試", "品質", "qa"] },
+  { role: "HR", phrases: ["人資", "hr"] },
+];
+
+function foldLatin(text) {
+  return String(text).toLowerCase();
+}
+
+function hasPhrase(text, phrase) {
+  const folded = foldLatin(text);
+  const needle = foldLatin(phrase);
+  if (needle.length <= 2 && /^[a-z]+$/.test(needle)) {
+    return new RegExp(`(^|[^a-z])${needle}([^a-z]|$)`).test(folded);
+  }
+  return folded.includes(needle);
+}
+
+export function rolesMentioned(body) {
+  return ROLE_ALIASES.filter((entry) => entry.role !== "HR" && entry.phrases.some((phrase) => hasPhrase(body, phrase))).map((entry) => entry.role);
 }
 
 export function roleMentioned(body) {
-  return ["Tech Lead", "PM", "FE", "BE", "QA"].find((role) => body.includes(role)) ?? null;
+  const found = rolesMentioned(body);
+  return found.length === 1 ? found[0] : null;
+}
+
+function editDistance(left, right) {
+  const a = foldLatin(left);
+  const b = foldLatin(right);
+  const row = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    let previous = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const current = row[j];
+      row[j] = a[i - 1] === b[j - 1] ? previous : Math.min(previous, row[j], row[j - 1]) + 1;
+      previous = current;
+    }
+  }
+  return row[b.length];
+}
+
+function nearestRole(token) {
+  const folded = foldLatin(token).replace(/[\s-]+/g, "");
+  let best = null;
+  let bestDistance = Infinity;
+  for (const entry of ROLE_ALIASES) {
+    for (const phrase of [entry.role, ...entry.phrases]) {
+      const compact = foldLatin(phrase).replace(/[\s-]+/g, "");
+      const distance = editDistance(folded, compact);
+      if (distance < bestDistance) {
+        best = entry.role;
+        bestDistance = distance;
+      }
+    }
+  }
+  const limit = folded.length <= 3 ? 1 : 2;
+  return bestDistance <= limit ? best : null;
+}
+
+function matchLeadingRole(text) {
+  const raw = String(text).trim();
+  const candidates = ROLE_ALIASES.flatMap((entry) => [entry.role, ...entry.phrases])
+    .sort((a, b) => b.length - a.length);
+  for (const phrase of candidates) {
+    const pattern = new RegExp(`^@${phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|$)`, "i");
+    const match = raw.match(pattern);
+    if (!match) continue;
+    const role = ROLE_ALIASES.find((entry) => entry.role.toLowerCase() === phrase.toLowerCase() || entry.phrases.some((item) => item.toLowerCase() === phrase.toLowerCase())).role;
+    return { role, body: raw.slice(match[0].length).trim() };
+  }
+  return null;
+}
+
+export function parseAddress(text) {
+  const direct = matchLeadingRole(text);
+  if (direct) return direct;
+  const unknown = String(text).trim().match(/^@([^\s@]+)(?:\s+([\s\S]*))?$/);
+  if (!unknown) return null;
+  const hint = nearestRole(unknown[1]);
+  if (!hint || hint.toLowerCase() === unknown[1].toLowerCase()) return null;
+  return { role: null, hint, token: unknown[1], body: (unknown[2] || "").trim() };
 }
 
 function clone(session) {
@@ -73,16 +152,16 @@ export function requestCandidates(session, role) {
     next.pendingCandidates = null;
     return { session: next, candidates: null };
   }
-  const options = MOCK_CANDIDATES[role].map((candidate) => ({ ...candidate }));
+  const options = [{ ...MOCK_CANDIDATES[role][0] }];
   next.pendingCandidates = { role, options };
   next.messages.push({
     from: "HR",
-    text: `這是 ${role} 的 Candidate（Mock mode，沒有呼叫模型，也沒有 OpenCode）。選定之前不會 Hire。`,
+    text: `${role} 的 Candidate 是${options[0].displayName}。按下 Hire 就建立 Hermes Bot。`,
   });
   return { session: next, candidates: options };
 }
 
-export function hire(session, candidateId, templates) {
+export function hire(session, candidateId, templates, options = {}) {
   const next = clone(session);
   const pending = next.pendingCandidates;
   const candidate = pending?.options.find((item) => item.id === candidateId) ?? null;
@@ -95,19 +174,31 @@ export function hire(session, candidateId, templates) {
     next.messages.push({ from: "system", text: `沒有 ${pending.role} 的 Hermes Bot profile 範本。` });
     return { session: next, profile: null };
   }
+  const createdBy = options.createdBy ?? "mock-hermes";
+  const reason = options.reason ?? "unconfigured";
   const profile = {
     ...structuredClone(template),
     displayName: candidate.displayName,
     candidateId: candidate.id,
-    createdBy: "mock-hermes",
+    createdBy,
   };
   next.present = [...next.present, pending.role];
   next.pendingCandidates = null;
   next.messages.push({
     from: "HR",
-    text: `已 Hire ${candidate.displayName} 擔任 ${pending.role}。Mock mode：由 Hermes 建立 Bot，OpenCode 沒有參與。`,
+    text: hireLine(candidate.displayName, pending.role, createdBy, reason),
   });
   return { session: next, profile };
+}
+
+function hireLine(displayName, role, createdBy, reason) {
+  if (createdBy === "hermes") {
+    return `已 Hire ${displayName} 擔任 ${role}。Hermes 已建立 Bot。OpenCode 沒有參與。`;
+  }
+  if (reason === "unreachable") {
+    return `已 Hire ${displayName} 擔任 ${role}。Mock mode：Hermes 連不上，這次沒有建立 Bot。OpenCode 沒有參與。`;
+  }
+  return `已 Hire ${displayName} 擔任 ${role}。Mock mode：由 Hermes 建立 Bot，OpenCode 沒有參與。`;
 }
 
 export function draftIssue(session, requestText) {
@@ -226,11 +317,33 @@ export function finishMockPr(session) {
   return { session: next, mockPr: next.mockPr };
 }
 
+function askWhichRole(next, choices, text) {
+  next.roleChoices = choices;
+  next.messages.push({ from: "HR", text });
+  return { session: next, effect: null, profile: null };
+}
+
 export function handleHumanMessage(session, text, templates) {
   const parsed = parseAddress(text);
   const next = clone(session);
+  next.roleChoices = null;
   next.messages.push({ from: "human", text: String(text), addressed: parsed?.role ?? null });
-  if (!parsed) {
+  if (parsed?.hint && !parsed.role) {
+    const found = rolesMentioned(parsed.body);
+    next.messages.push({
+      from: "system",
+      text: `沒有 @${parsed.token}。是不是要找 @${parsed.hint}？`,
+    });
+    if (parsed.hint === "HR" && found.length === 1) {
+      const asked = requestCandidates(next, found[0]);
+      asked.session.roleChoices = null;
+      return { ...asked, effect: asked.candidates ? "candidates" : null, profile: null };
+    }
+    return askWhichRole(next, found.length ? found : HIREABLE_ROLES, found.length
+      ? `可以點 ${found.join("、")}。`
+      : "點一個 Role：PM、Tech Lead、FE、BE 或 QA。");
+  }
+  if (!parsed?.role) {
     next.messages.push({
       from: "system",
       text: "請用 @Role 指定一位已經在 Office 裡的 Hermes Bot。",
@@ -253,15 +366,15 @@ export function handleHumanMessage(session, text, templates) {
         return { ...hired, effect: hired.profile ? "hire" : null };
       }
     }
-    const role = roleMentioned(parsed.body);
-    if (!role) {
-      next.messages.push({
-        from: "HR",
-        text: "告訴我 Role：PM、Tech Lead、FE、BE 或 QA。",
-      });
-      return { session: next, effect: null, profile: null };
+    const found = rolesMentioned(parsed.body);
+    if (found.length > 1) {
+      return askWhichRole(next, found, `你提到 ${found.join("、")}。點一個就好。`);
     }
-    const asked = requestCandidates(next, role);
+    if (found.length === 0) {
+      return askWhichRole(next, HIREABLE_ROLES, "我沒有對上 Role。可以直接點 PM、Tech Lead、FE、BE 或 QA，也可以說「請幫我 hire tech lead」。");
+    }
+    const asked = requestCandidates(next, found[0]);
+    asked.session.roleChoices = null;
     return { ...asked, effect: asked.candidates ? "candidates" : null, profile: null };
   }
   if (parsed.role === "PM") {

@@ -11,17 +11,19 @@ import { ceilingAt, groundAt } from './collide';
 export const EYE_HEIGHT = 1.4;
 
 /**
- * Spike spectator: a fixed elevated view of the north-west pod, where HarnessOffice seats HR
- * (`desk-1`, x −11.6) and PM (`desk-2`, x −9.4) at z −4.55. Under the ceiling (6.8 m), looking
- * north so both name tags sit in frame. It does not follow the player.
+ * Spike spectator: one fixed overhead of the north desks, not a follow camera.
+ * HR is desk-1 (x −11.6), PM is desk-2 (x −9.4), QA is desk-6 (x −0.4), all at z −4.55.
+ * The HR and QA signs are the far left and right boards. The camera stands far enough
+ * south, under the 6.8 m ceiling, that both boards stay inside a 1280×800 frame.
+ * Stay under the 6.8 m ceiling. WASD does not move this camera.
  */
 export const SPECTATOR_CAMERA = {
-  x: -10.5,
-  y: 4.2,
-  z: -1.6,
-  lookX: -10.5,
-  lookY: 1.2,
-  lookZ: -4.9,
+  x: -6,
+  y: 6.45,
+  z: 11.2,
+  lookX: -6,
+  lookY: 1.5,
+  lookZ: -4.5,
 } as const;
 
 /** The room the camera keeps to (see PlayerController.room). */

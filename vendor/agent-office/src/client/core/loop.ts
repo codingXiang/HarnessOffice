@@ -91,7 +91,8 @@ export function installLoop(ctx: Ctx, core: CoreState, parts: Pick<Parts, 'stage
     // In first person your body's there below you (see FirstPersonBody), unless your hands are busy elsewhere (a car's wheel).
     const ownBody = firstPerson && !ctx.activities.any('takesCamera') && !ctx.activities.any('hidesHands');
     (firstBody ??= new FirstPersonBody(me.rig)).set(ownBody, camera);
-    me.root.visible = ownBody || ctx.activities.any('takesCamera') || (!firstPerson && camera.position.distanceTo(headPos.set(player.pos.x, player.pos.y + 1.3, player.pos.z)) > 1.5);
+    // Spectator is a fixed overview of the desks. The local guest stays out of that frame.
+    me.root.visible = player.view !== 'spectator' && (ownBody || ctx.activities.any('takesCamera') || (!firstPerson && camera.position.distanceTo(headPos.set(player.pos.x, player.pos.y + 1.3, player.pos.z)) > 1.5));
     // In a car, your hands are on the wheel, out of sight.
     if (firstPerson && !ctx.activities.any('hidesHands')) hands.update(dt, t, { yaw: player.camYaw, pitch: player.lookPitch, walkPhase: player.walkPhase, walking: player.moving && player.grounded, airborne: !player.grounded, jitter: player.effects.jitter, grip });
     // What you're doing widens the view (down a pole) or narrows it (at the oche or the line), and once
@@ -181,8 +182,14 @@ export function installLoop(ctx: Ctx, core: CoreState, parts: Pick<Parts, 'stage
     sound.setWeather(sky.rain, 1 - sky.daylight);
   }
 
+  let lastSpectatorDraw = 0;
+
   /** Draws the frame, through whatever it's drawn through (a few drinks in, the drunk vision: see ctx.view). */
   function drawFrame(f: Frame) {
+    if (document.hidden) return;
+    // The spectator camera does not move. Drawing it at 10fps keeps the GPU off a full 60fps load.
+    if (ctx.player.view === 'spectator' && f.now - lastSpectatorDraw < 100) return;
+    lastSpectatorDraw = f.now;
     ctx.view.draw(f, drawScene);
   }
 

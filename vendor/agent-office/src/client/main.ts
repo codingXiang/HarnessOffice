@@ -1,7 +1,7 @@
 import './style.css';
 import { Net } from './net';
 import { DesktopNotifier } from './notify';
-import { store, loadProfile, loadSettings } from './state';
+import { store, loadProfile, loadSettings, saveProfile } from './state';
 import { PlayerController, groundAt } from './player';
 import { Hands } from './world/hands';
 import { Confetti } from './world/confetti';
@@ -210,8 +210,20 @@ void whoami().then(() => {
   if (saved && store.me.account) saved.name = store.me.account.name;
   if (store.me.account) store.profile.name = store.me.account.name;
   store.emit('me');
-  if (saved?.look) {
-    store.profile = { ...saved, look: saved.look };
+  // Spectator is a fixed camera. A fresh browser has no saved look, and the character
+  // picker would cover that view. Use the guest already in the store and connect.
+  const spectatorGuest = !saved?.look && parts.settings.view === 'spectator';
+  if (saved?.look || spectatorGuest) {
+    if (spectatorGuest) {
+      store.profile = {
+        name: saved?.name || store.profile.name,
+        color: saved?.color || store.profile.color,
+        look: store.profile.look,
+      };
+      saveProfile(store.profile);
+    } else if (saved?.look) {
+      store.profile = { ...saved, look: saved.look };
+    }
     parts.you.showMyProfile(store.profile);
     boot();
     // In as soon as the floor you're on is here with its dog, so the dog doesn't pop in after.

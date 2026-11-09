@@ -37,7 +37,7 @@ export interface Stage {
 
 export function makeRenderer(canvas: HTMLCanvasElement): THREE.WebGLRenderer | null {
   try {
-    return new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+    return new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'low-power' });
   } catch (err) {
     console.error(err);
     return null;
@@ -52,7 +52,7 @@ export function noWebGL(): Promise<never> {
 
 /** Sets up the renderer on `canvas`, and builds the scene: its lights, the camera, the office, the sky. */
 export function createScene(canvas: HTMLCanvasElement, renderer: THREE.WebGLRenderer): Stage {
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setPixelRatio(1);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;

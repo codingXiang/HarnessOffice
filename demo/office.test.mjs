@@ -57,6 +57,7 @@ test("Hire waits for a human selection, then adds the Role without touching the 
   assert.equal(hired.profile.runtime, "hermes");
   assert.equal(hired.profile.openCode, false);
   assert.equal(hired.profile.createdBy, "mock-hermes");
+  assert.match(hired.session.messages.at(-1).text, /Mock mode：由 Hermes 建立 Bot，OpenCode 沒有參與。/);
   assert.equal(templates.PM.displayName, null);
   assert.equal(Object.hasOwn(templates.PM, "createdBy"), false);
 });
@@ -105,9 +106,51 @@ test("coding stays stopped until the human approves the PM draft and the Tech Le
   assert.equal(pr.mockPr.title, "做一個像素 Office");
 });
 
+test("a live Hire says Hermes created the Bot, and an unreachable endpoint stays visibly Mock", () => {
+  const pending = requestCandidates(createSession(), "PM").session;
+  const live = hire(pending, "pm-lin", templates, { createdBy: "hermes", reason: "created" });
+  assert.equal(live.profile.createdBy, "hermes");
+  assert.match(live.session.messages.at(-1).text, /Hermes 已建立 Bot/);
+  assert.doesNotMatch(live.session.messages.at(-1).text, /Mock mode/);
+
+  const down = hire(pending, "pm-lin", templates, { reason: "unreachable" });
+  assert.equal(down.profile.createdBy, "mock-hermes");
+  assert.match(down.session.messages.at(-1).text, /Mock mode：Hermes 連不上，這次沒有建立 Bot/);
+});
+
 test("@ address parses Tech Lead as one Role", () => {
   assert.deepEqual(parseAddress("@Tech Lead 分派"), { role: "Tech Lead", body: "分派" });
   assert.equal(parseAddress("Tech Lead"), null);
+});
+
+test("asking HR to hire FE proposes one candidate and one Hire", () => {
+  const asked = handleHumanMessage(createSession(), "@HR 請幫我 hire FE", templates);
+  assert.equal(asked.session.pendingCandidates.role, "FE");
+  assert.equal(asked.session.pendingCandidates.options.length, 1);
+  assert.equal(asked.session.pendingCandidates.options[0].id, "fe-wu");
+  assert.match(asked.session.messages.at(-1).text, /吳像素/);
+  assert.equal(asked.session.present.includes("FE"), false);
+  const hired = hire(asked.session, "fe-wu", templates);
+  assert.equal(hired.session.present.includes("FE"), true);
+  const again = hire(hired.session, "fe-wu", templates);
+  assert.match(again.session.messages.at(-1).text, /還沒有可以選定的 Candidate|已經在 Office/);
+});
+
+test("HR understands a natural hire request and offers choices when it cannot", () => {
+  const hired = handleHumanMessage(createSession(), "@HR 請幫我 hire tech lead", templates);
+  assert.equal(hired.session.pendingCandidates.role, "Tech Lead");
+  assert.equal(handleHumanMessage(createSession(), "@HR techlead", templates).session.pendingCandidates.role, "Tech Lead");
+  assert.equal(handleHumanMessage(createSession(), "@hr 技術主管", templates).session.pendingCandidates.role, "Tech Lead");
+  assert.equal(handleHumanMessage(createSession(), "@HR 請找前端", templates).session.pendingCandidates.role, "FE");
+  const hello = handleHumanMessage(createSession(), "@HR 你好", templates);
+  assert.equal(hello.session.pendingCandidates, null);
+  assert.deepEqual(hello.session.roleChoices, ["PM", "Tech Lead", "FE", "BE", "QA"]);
+  const both = handleHumanMessage(createSession(), "@HR 請 FE 和 BE", templates);
+  assert.equal(both.session.pendingCandidates, null);
+  assert.deepEqual(both.session.roleChoices, ["FE", "BE"]);
+  const typo = handleHumanMessage(createSession(), "@MR 請幫我 hire tech lead", templates);
+  assert.match(typo.session.messages.find((message) => message.from === "system").text, /是不是要找 @HR/);
+  assert.equal(typo.session.pendingCandidates.role, "Tech Lead");
 });
 
 test("templates are Hermes profiles with no hired name", () => {
