@@ -123,6 +123,23 @@ test("@ address parses Tech Lead as one Role", () => {
   assert.equal(parseAddress("Tech Lead"), null);
 });
 
+test("HR understands a natural hire request and offers choices when it cannot", () => {
+  const hired = handleHumanMessage(createSession(), "@HR 請幫我 hire tech lead", templates);
+  assert.equal(hired.session.pendingCandidates.role, "Tech Lead");
+  assert.equal(handleHumanMessage(createSession(), "@HR techlead", templates).session.pendingCandidates.role, "Tech Lead");
+  assert.equal(handleHumanMessage(createSession(), "@hr 技術主管", templates).session.pendingCandidates.role, "Tech Lead");
+  assert.equal(handleHumanMessage(createSession(), "@HR 請找前端", templates).session.pendingCandidates.role, "FE");
+  const hello = handleHumanMessage(createSession(), "@HR 你好", templates);
+  assert.equal(hello.session.pendingCandidates, null);
+  assert.deepEqual(hello.session.roleChoices, ["PM", "Tech Lead", "FE", "BE", "QA"]);
+  const both = handleHumanMessage(createSession(), "@HR 請 FE 和 BE", templates);
+  assert.equal(both.session.pendingCandidates, null);
+  assert.deepEqual(both.session.roleChoices, ["FE", "BE"]);
+  const typo = handleHumanMessage(createSession(), "@MR 請幫我 hire tech lead", templates);
+  assert.match(typo.session.messages.find((message) => message.from === "system").text, /是不是要找 @HR/);
+  assert.equal(typo.session.pendingCandidates.role, "Tech Lead");
+});
+
 test("templates are Hermes profiles with no hired name", () => {
   for (const role of ["HR", "PM", "Tech Lead", "FE", "BE", "QA"]) {
     assert.equal(templates[role].runtime, "hermes");

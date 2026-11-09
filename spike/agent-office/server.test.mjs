@@ -218,6 +218,8 @@ test("the office page is the chat client and does not return a Hermes secret", a
   const panel = fs.readFileSync(new URL("./panel/office-panel.js", import.meta.url), "utf8");
   assert.match(panel, /event\.key !== "Enter"/);
   assert.match(panel, /送出中…/);
+  assert.match(panel, /沒有在時間內送出。文字還在。/);
+  assert.match(panel, /roleChoices/);
   assert.equal(panel.includes("localStorage"), false);
   const calls = [];
   const server = createSpikeServer({
@@ -259,7 +261,7 @@ test("the office page is the chat client and does not return a Hermes secret", a
     const saidBody = await said.json();
     assert.equal(said.status, 200);
     assert.equal(saidBody.office.messages[0].text, "fixture：你好");
-    assert.equal(calls.some((call) => call.url.endsWith("/api/session/messages") && call.body.includes("fixture：你好")), true);
+    assert.equal(calls.some((call) => call.url.includes("/api/session/messages") && call.body.includes("fixture：你好")), true);
     const settings = await fetch(`http://127.0.0.1:${port}/api/office/hermes`);
     const settingsText = await settings.text();
     assert.equal(settings.status, 200);

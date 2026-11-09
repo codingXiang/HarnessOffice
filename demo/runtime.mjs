@@ -6,7 +6,6 @@ import {
   hire,
   holdIssue,
   parseAddress,
-  roleMentioned,
   startMockCoding,
 } from "./office.mjs";
 import { hireWithHermes, normalizeSettings, redactSecrets, streamBotTurn } from "./hermes.mjs";
@@ -236,7 +235,7 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings, onChan
     return view();
   }
 
-  async function postMessage({ text, clientMessageId }) {
+  async function postMessage({ text, clientMessageId, wait = true }) {
     const body = String(text ?? "");
     if (!body.trim()) return { ok: false, status: 400, session: view() };
     if (clientMessageId && record.clientIds[clientMessageId]) return { ok: true, duplicate: true, session: view() };
@@ -249,13 +248,20 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings, onChan
         return hireCandidate(candidate.id);
       }
     }
-    const askingCandidates = parsed?.role === "HR" && roleMentioned(parsed.body) && !hireName;
-    const bot = parsed ? record.bots[parsed.role] : null;
-    if (bot && !askingCandidates && record.office.present.includes(parsed.role)) {
+    if (parsed?.role === "HR" || (parsed?.hint && !parsed.role)) {
+      const result = handleHumanMessage(record.office, body, templates);
+      record.office = result.session;
+      if (clientMessageId) record.clientIds[clientMessageId] = "mock";
+      touch();
+      return { ok: true, profile: result.profile, effect: result.effect, session: view() };
+    }
+    const bot = parsed?.role ? record.bots[parsed.role] : null;
+    if (bot && record.office.present.includes(parsed.role)) {
       if (clientMessageId) record.clientIds[clientMessageId] = "live";
       if (bot.route === "multiplex" && bot.sessionId) {
-        const session = await deliverLive(parsed, body, null);
-        return { ok: true, session };
+        const pending = deliverLive(parsed, body, null);
+        if (!wait) return { ok: true, accepted: true, session: view() };
+        return { ok: true, session: await pending };
       }
       record.office.messages.push({ from: "human", text: body, addressed: parsed.role });
       record.office.messages.push({

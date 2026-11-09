@@ -295,7 +295,7 @@ export function createSpikeServer({
         return;
       }
       if (req.method === "POST" && url.pathname === "/api/office/messages") {
-        await proxyChat(res, "/api/session/messages", { method: "POST", body: await readJson(req), timeoutMs: 180000, refresh: true });
+        await proxyChat(res, "/api/session/messages?wait=0", { method: "POST", body: await readJson(req), timeoutMs: 20000, refresh: true });
         return;
       }
       if (req.method === "POST" && url.pathname === "/api/office/hire") {

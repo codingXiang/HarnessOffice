@@ -192,3 +192,35 @@ test("cancelling a live turn does not keep a successful reply", async () => {
   assert.match(done.session.office.messages.at(-1).text, /已取消/);
   assert.equal(done.session.office.messages.some((message) => message.from === "PM" && message.delivery === "done"), false);
 });
+
+test("a live turn can be accepted before Hermes replies", async () => {
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const runtime = createOfficeRuntime({
+    templates,
+    fetchImpl: async (url, init) => {
+      if (url.endsWith("/health") && !url.includes("/p/")) return json(200, { status: "ok" });
+      if (url.endsWith("/v1/capabilities")) return json(200, {});
+      if (url.includes("/p/__ho_probe__/health")) return json(404, { error: "Unknown or unconfigured profile" });
+      if (url.endsWith("/api/profiles")) return json(201, { ok: true, name: "pm-lin" });
+      if (url.endsWith("/api/env")) return json(200, { ok: true, key: "API_SERVER_KEY" });
+      if (url.endsWith("/api/sessions")) return json(201, {});
+      if (url.endsWith("/chat/stream")) {
+        await gate;
+        return sse("fixture：回覆還在路上。");
+      }
+      throw new Error(url);
+    },
+    loadSettings: () => ({ apiBase: "https://hermes.example", token: "desk-token", dashboardToken: "dash-explicit" }),
+  });
+  runtime.boot(null);
+  await hirePm(runtime);
+  const accepted = await runtime.postMessage({ text: "@PM fixture：先收下", wait: false });
+  assert.equal(accepted.accepted, true);
+  assert.equal(accepted.session.office.messages.at(-1).delivery, "pending");
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(runtime.view().office.messages.at(-1).text, "fixture：回覆還在路上。");
+});
