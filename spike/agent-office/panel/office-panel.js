@@ -10,7 +10,7 @@ root.innerHTML = `
   <div class="ho-candidates" id="ho-candidates"></div>
   <form id="ho-composer">
     <label for="ho-draft">對 Office 說話。Enter 送出，Shift+Enter 換行。用 @Role，例如 @QA。</label>
-    <textarea id="ho-draft" rows="2" placeholder="@QA 你好"></textarea>
+    <textarea id="ho-draft" rows="2" placeholder="用 @Role 說話"></textarea>
     <button type="submit">送出</button>
   </form>
   <p class="ho-status" id="ho-send-status" role="status"></p>
@@ -49,21 +49,34 @@ const DELIVERY = {
   cancelled: "已取消",
 };
 
-let seenRevision = -1;
+let confirmed = null;
+let outbox = null;
 
-function badge(delivery) {
-  const label = DELIVERY[delivery];
-  if (!label) return "";
-  return `<span class="ho-badge ${delivery}">${label}</span>`;
+function lineItem(who, text, delivery) {
+  const item = document.createElement("li");
+  const head = document.createElement("div");
+  head.className = "ho-who";
+  head.textContent = who;
+  if (delivery) head.append(badgeNode(delivery));
+  const body = document.createElement("div");
+  body.textContent = text;
+  item.append(head, body);
+  return item;
 }
 
-function render(session) {
-  if (!session?.office) return;
-  if (session.revision != null && session.revision === seenRevision) return;
-  seenRevision = session.revision ?? seenRevision;
-  const office = session.office;
-  const activity = session.activity ?? {};
-  const bots = session.bots ?? {};
+function badgeNode(delivery) {
+  const label = DELIVERY[delivery];
+  if (!label) return document.createTextNode("");
+  const node = document.createElement("span");
+  node.className = `ho-badge ${delivery}`;
+  node.textContent = label;
+  return node;
+}
+
+function render() {
+  const office = confirmed?.office ?? { messages: [], present: [] };
+  const activity = confirmed?.activity ?? {};
+  const bots = confirmed?.bots ?? {};
   roles.textContent = (office.present ?? []).map((role) => {
     const name = bots[role]?.displayName && bots[role].displayName !== role ? `${role} ${bots[role].displayName}` : role;
     const state = activity[role] === "working" ? "處理中" : activity[role] === "waiting" ? "等待" : "在場";
@@ -71,10 +84,23 @@ function render(session) {
   }).join("  ") || "還沒有角色";
   log.replaceChildren();
   for (const message of office.messages ?? []) {
-    const item = document.createElement("li");
     const who = message.from === "human" ? "你" : message.from === "system" ? "系統" : message.from;
-    item.innerHTML = `<div class="ho-who">${who}${badge(message.delivery)}</div><div></div>`;
-    item.querySelector("div:last-child").textContent = message.text;
+    log.append(lineItem(who, message.text, message.delivery));
+  }
+  if (outbox) {
+    const item = lineItem("你", outbox.text, "");
+    item.className = "ho-unconfirmed";
+    const mark = document.createElement("span");
+    mark.className = "ho-badge pending";
+    mark.textContent = outbox.state === "failed" ? "未寫入伺服器" : "尚未寫入伺服器";
+    item.querySelector(".ho-who").append(mark);
+    if (outbox.state === "failed") {
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.textContent = "再試一次";
+      retry.addEventListener("click", () => send(outbox.text));
+      item.append(retry);
+    }
     log.append(item);
   }
   log.scrollTop = log.scrollHeight;
@@ -98,39 +124,54 @@ function render(session) {
   }
 }
 
+function adopt(session) {
+  if (!session?.office) return false;
+  confirmed = session;
+  if (outbox && (session.office.messages ?? []).some((message) => message.from === "human" && message.text === outbox.text)) {
+    outbox = null;
+  }
+  render();
+  return true;
+}
+
 async function readSession() {
-  const response = await fetch("/api/office/session");
+  const response = await fetch("/api/office/session", { cache: "no-store" });
   const payload = await response.json();
   if (!response.ok) {
     sendStatus.textContent = payload.message || "讀不到 Group Chat。";
-    return;
+    return null;
   }
-  render(payload);
+  adopt(payload);
+  return payload;
 }
 
 const SEND_TIMEOUT_MS = 12000;
-let inflightText = "";
 
-async function reconcile(text) {
-  try {
-    const response = await fetch("/api/office/session", { signal: AbortSignal.timeout(4000) });
-    if (!response.ok) return null;
-    const payload = await response.json();
-    const messages = payload.office?.messages ?? [];
-    if (!messages.some((message) => message.from === "human" && message.text === text)) return null;
-    seenRevision = -1;
-    render(payload);
-    return { pending: messages.some((message) => message.delivery === "pending") };
-  } catch {
-    return null;
-  }
+function stored(session, text) {
+  return (session?.office?.messages ?? []).some((message) => message.from === "human" && message.text === text);
+}
+
+async function confirmSend(text) {
+  const response = await fetch("/api/office/session", { cache: "no-store", signal: AbortSignal.timeout(4000) });
+  if (!response.ok) return null;
+  const payload = await response.json();
+  if (!stored(payload, text)) return null;
+  adopt(payload);
+  return payload;
+}
+
+function failSend(text, detail) {
+  outbox = { text, state: "failed" };
+  draft.value = text;
+  sendStatus.textContent = detail;
+  render();
 }
 
 async function send(text) {
-  const previous = draft.value;
+  outbox = { text, state: "pending" };
   draft.value = "";
-  inflightText = text;
   sendStatus.textContent = "送出中…";
+  render();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
   try {
@@ -140,33 +181,24 @@ async function send(text) {
       body: JSON.stringify({ text }),
       signal: controller.signal,
     });
-    const payload = await response.json();
-    if (!response.ok || !payload?.office) {
-      const arrived = await reconcile(text);
-      if (arrived) {
-        inflightText = "";
-        sendStatus.textContent = arrived.pending ? "已送出，回覆還在路上。" : "";
-        return;
-      }
-      draft.value = previous;
-      inflightText = "";
-      sendStatus.textContent = payload.message || `沒有送出（HTTP ${response.status}）。文字還在。`;
+    await response.json().catch(() => null);
+    const session = await confirmSend(text);
+    if (!session) {
+      failSend(text, "伺服器沒有收下這則。文字還在，可以再試一次。");
       return;
     }
-    inflightText = "";
-    sendStatus.textContent = payload.office.messages?.some((message) => message.delivery === "pending") ? "已送出，回覆還在路上。" : "";
-    seenRevision = -1;
-    render(payload);
+    sendStatus.textContent = (session.office.messages ?? []).some((message) => message.delivery === "pending")
+      ? "已送出，回覆還在路上。"
+      : "";
   } catch {
-    const arrived = await reconcile(text);
-    if (arrived) {
-      inflightText = "";
-      sendStatus.textContent = arrived.pending ? "已送出，回覆還在路上。" : "";
+    const session = await confirmSend(text).catch(() => null);
+    if (session) {
+      sendStatus.textContent = (session.office.messages ?? []).some((message) => message.delivery === "pending")
+        ? "已送出，回覆還在路上。"
+        : "";
       return;
     }
-    draft.value = previous;
-    inflightText = "";
-    sendStatus.textContent = controller.signal.aborted ? "沒有在時間內送出。文字還在。" : "沒有送到伺服器。文字還在。";
+    failSend(text, controller.signal.aborted ? "沒有在時間內送出。文字還在，可以再試一次。" : "沒有送到伺服器。文字還在，可以再試一次。");
   } finally {
     clearTimeout(timer);
   }
@@ -187,9 +219,8 @@ async function hire(candidateId, button) {
       button.disabled = false;
       return;
     }
-    sendStatus.textContent = "";
-    seenRevision = -1;
-    render(payload);
+    const session = await readSession();
+    sendStatus.textContent = session ? "" : "Hire 的結果還沒從伺服器讀回。";
   } catch {
     button.disabled = false;
     sendStatus.textContent = "Hire 沒有送到伺服器。";
@@ -293,12 +324,7 @@ root.querySelector("#ho-probe").addEventListener("click", async () => {
 const stream = new EventSource("/api/office/events");
 stream.onmessage = (event) => {
   try {
-    const payload = JSON.parse(event.data);
-    render(payload);
-    if (inflightText && payload.office?.messages?.some((message) => message.from === "human" && message.text === inflightText)) {
-      inflightText = "";
-      if (sendStatus.textContent === "送出中…") sendStatus.textContent = "已送出，回覆還在路上。";
-    }
+    adopt(JSON.parse(event.data));
   } catch {
     // A bad event does not clear the transcript already on screen.
   }

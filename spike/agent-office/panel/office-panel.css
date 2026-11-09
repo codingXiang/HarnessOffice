@@ -74,6 +74,7 @@
 #ho-office .ho-badge.pending { color: #9a6b00; }
 #ho-office .ho-badge.error { color: #9b2226; }
 #ho-office .ho-badge.done { color: #1b7f4a; }
+#ho-office .ho-unconfirmed { outline: 2px dashed #9a6b00; }
 
 #ho-office textarea {
   width: 100%;

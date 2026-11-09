@@ -182,8 +182,14 @@ export function installLoop(ctx: Ctx, core: CoreState, parts: Pick<Parts, 'stage
     sound.setWeather(sky.rain, 1 - sky.daylight);
   }
 
+  let lastSpectatorDraw = 0;
+
   /** Draws the frame, through whatever it's drawn through (a few drinks in, the drunk vision: see ctx.view). */
   function drawFrame(f: Frame) {
+    if (document.hidden) return;
+    // The spectator camera does not move. Drawing it at 10fps keeps the GPU off a full 60fps load.
+    if (ctx.player.view === 'spectator' && f.now - lastSpectatorDraw < 100) return;
+    lastSpectatorDraw = f.now;
     ctx.view.draw(f, drawScene);
   }
 

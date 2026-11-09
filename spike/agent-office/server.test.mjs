@@ -218,8 +218,15 @@ test("the office page is the chat client and does not return a Hermes secret", a
   const panel = fs.readFileSync(new URL("./panel/office-panel.js", import.meta.url), "utf8");
   assert.match(panel, /event\.key !== "Enter"/);
   assert.match(panel, /送出中…/);
-  assert.match(panel, /沒有在時間內送出。文字還在。/);
+  assert.match(panel, /沒有在時間內送出。文字還在，可以再試一次。/);
+  assert.match(panel, /尚未寫入伺服器/);
+  assert.match(panel, /再試一次/);
   assert.match(panel, /roleChoices/);
+  assert.equal(panel.includes("告訴我 Role"), false);
+  const loop = fs.readFileSync(new URL("../../vendor/agent-office/src/client/core/loop.ts", import.meta.url), "utf8");
+  const scene = fs.readFileSync(new URL("../../vendor/agent-office/src/client/core/scene.ts", import.meta.url), "utf8");
+  assert.match(loop, /player\.view === 'spectator' && f\.now - lastSpectatorDraw < 100/);
+  assert.match(scene, /setPixelRatio\(1\)/);
   assert.equal(panel.includes("localStorage"), false);
   const calls = [];
   const server = createSpikeServer({
