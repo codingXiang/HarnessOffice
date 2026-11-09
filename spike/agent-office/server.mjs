@@ -48,6 +48,7 @@ function sendJson(res, status, body) {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "content-length": Buffer.byteLength(payload),
+    "cache-control": "no-store",
     "access-control-allow-origin": "*",
   });
   res.end(payload);
@@ -55,17 +56,44 @@ function sendJson(res, status, body) {
 
 const panelDir = path.join(spikeRoot, "panel");
 
-export function withOfficePanel(html) {
-  const tags = `<link rel="stylesheet" href="/office-panel.css"><script type="module" src="/office-panel.js"></script>`;
+export function officeBuildId({ env = process.env, cwd = process.cwd(), root = repoRoot } = {}) {
+  if (env.HARNESS_BUILD) return String(env.HARNESS_BUILD);
+  for (const file of [path.join(cwd, "RUNTIME.txt"), path.join(root, "RUNTIME.txt")]) {
+    try {
+      const match = fs.readFileSync(file, "utf8").match(/^commit:\s*([0-9a-f]+)/m);
+      if (match) return match[1];
+    } catch {
+      // The next candidate may exist in a packed bundle.
+    }
+  }
+  try {
+    return `panel-${Math.floor(fs.statSync(path.join(panelDir, "office-panel.js")).mtimeMs)}`;
+  } catch {
+    return "dev";
+  }
+}
+
+export function withOfficePanel(html, buildId = officeBuildId()) {
+  const safe = String(buildId).replace(/[^0-9A-Za-z._-]/g, "");
+  const tags = `<meta name="ho-build" content="${safe}"><link rel="stylesheet" href="/office-panel.css"><script type="module" src="/office-panel.js"></script>`;
   const source = String(html);
   if (source.includes("</body>")) return source.replace("</body>", `${tags}</body>`);
   return `${source}${tags}`;
 }
 
-function sendText(res, status, body, type) {
+export function cacheControlFor(pathname) {
+  if (pathname === "/" || pathname === "/index.html" || pathname === "/office-panel.js" || pathname === "/office-panel.css") {
+    return "no-store";
+  }
+  if (pathname.startsWith("/assets/")) return "public, max-age=31536000, immutable";
+  return "no-cache";
+}
+
+function sendText(res, status, body, type, cacheControl = "no-store") {
   res.writeHead(status, {
     "content-type": type,
     "content-length": Buffer.byteLength(body),
+    "cache-control": cacheControl,
   });
   res.end(body);
 }
@@ -290,6 +318,10 @@ export function createSpikeServer({
         sendText(res, 200, fs.readFileSync(file, "utf8"), url.pathname.endsWith(".css") ? "text/css; charset=utf-8" : "text/javascript; charset=utf-8");
         return;
       }
+      if (req.method === "GET" && url.pathname === "/api/office/build") {
+        sendJson(res, 200, { id: officeBuildId() });
+        return;
+      }
       if (req.method === "GET" && url.pathname === "/api/office/session") {
         await proxyChat(res, "/api/session");
         return;
@@ -367,10 +399,12 @@ export function createSpikeServer({
         return;
       }
       const fileBody = fs.readFileSync(target);
-      const body = path.basename(target) === "index.html" ? Buffer.from(withOfficePanel(fileBody.toString("utf8"))) : fileBody;
+      const isIndex = path.basename(target) === "index.html";
+      const body = isIndex ? Buffer.from(withOfficePanel(fileBody.toString("utf8"))) : fileBody;
       res.writeHead(200, {
         "content-type": MIME[path.extname(target)] ?? "application/octet-stream",
         "content-length": body.length,
+        "cache-control": cacheControlFor(isIndex ? "/index.html" : pathname),
       });
       res.end(body);
     } catch {

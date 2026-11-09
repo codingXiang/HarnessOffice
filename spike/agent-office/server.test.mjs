@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { WebSocket } from "ws";
 import { DEMO_STEPS } from "./demo.mjs";
 import { createOffice } from "./office.mjs";
-import { FLOOR_SPAWN, createSpikeServer, spikeBind, withOfficePanel } from "./server.mjs";
+import { FLOOR_SPAWN, cacheControlFor, createSpikeServer, spikeBind, withOfficePanel } from "./server.mjs";
 
 function listen(server) {
   return new Promise((resolve) => {
@@ -222,6 +224,12 @@ test("the office page is the chat client and does not return a Hermes secret", a
   assert.match(panel, /尚未寫入伺服器/);
   assert.match(panel, /再試一次/);
   assert.match(panel, /roleChoices/);
+  assert.match(panel, /function withTimeout/);
+  assert.match(panel, /\/api\/office\/build/);
+  assert.match(withOfficePanel("<html><body></body></html>", "abc123"), /name="ho-build" content="abc123"/);
+  assert.equal(cacheControlFor("/index.html"), "no-store");
+  assert.equal(cacheControlFor("/office-panel.js"), "no-store");
+  assert.match(cacheControlFor("/assets/main-abc.js"), /immutable/);
   assert.equal(panel.includes("告訴我 Role"), false);
   const loop = fs.readFileSync(new URL("../../vendor/agent-office/src/client/core/loop.ts", import.meta.url), "utf8");
   const scene = fs.readFileSync(new URL("../../vendor/agent-office/src/client/core/scene.ts", import.meta.url), "utf8");
@@ -274,8 +282,13 @@ test("the office page is the chat client and does not return a Hermes secret", a
     assert.equal(settings.status, 200);
     assert.equal(settingsText.includes("desk-token"), false);
     assert.match(settingsText, /tokenSet/);
-    const script = await (await fetch(`http://127.0.0.1:${port}/office-panel.js`)).text();
+    const scriptResponse = await fetch(`http://127.0.0.1:${port}/office-panel.js`);
+    assert.equal(scriptResponse.headers.get("cache-control"), "no-store");
+    const script = await scriptResponse.text();
     assert.match(script, /\/api\/office\/hire/);
+    const build = await fetch(`http://127.0.0.1:${port}/api/office/build`);
+    assert.equal(build.headers.get("cache-control"), "no-store");
+    assert.ok((await build.json()).id);
   } finally {
     await close(server);
   }
@@ -288,6 +301,24 @@ test("the office page is the chat client and does not return a Hermes secret", a
     assert.match((await missing.json()).message, /沒有接到 Group Chat/);
   } finally {
     await close(bare);
+  }
+});
+
+test("the office page is not cached and a hashed asset is", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ho-office-"));
+  fs.mkdirSync(path.join(dir, "assets"));
+  fs.writeFileSync(path.join(dir, "index.html"), "<html><body>office</body></html>");
+  fs.writeFileSync(path.join(dir, "assets", "main-abc.js"), "console.log(1)");
+  const server = createSpikeServer({ clientDist: dir });
+  const port = await listen(server);
+  try {
+    const page = await fetch(`http://127.0.0.1:${port}/`);
+    assert.equal(page.headers.get("cache-control"), "no-store");
+    assert.match(await page.text(), /office-panel\.js/);
+    const asset = await fetch(`http://127.0.0.1:${port}/assets/main-abc.js`);
+    assert.match(asset.headers.get("cache-control"), /immutable/);
+  } finally {
+    await close(server);
   }
 });
 

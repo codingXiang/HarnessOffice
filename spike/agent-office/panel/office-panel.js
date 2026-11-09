@@ -167,63 +167,104 @@ function failSend(text, detail) {
   render();
 }
 
+function withTimeout(work, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(Object.assign(new Error("timeout"), { name: "TimeoutError" })), ms);
+    Promise.resolve().then(work).then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 async function send(text) {
   outbox = { text, state: "pending" };
   draft.value = "";
   sendStatus.textContent = "送出中…";
   render();
+  let finished = false;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
-  try {
-    const response = await fetch("/api/office/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
-      signal: controller.signal,
-    });
-    await response.json().catch(() => null);
-    const session = await confirmSend(text);
-    if (!session) {
-      failSend(text, "伺服器沒有收下這則。文字還在，可以再試一次。");
-      return;
-    }
-    sendStatus.textContent = (session.office.messages ?? []).some((message) => message.delivery === "pending")
-      ? "已送出，回覆還在路上。"
-      : "";
-  } catch {
-    const session = await confirmSend(text).catch(() => null);
-    if (session) {
+  const finish = (detail) => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(hard);
+    controller.abort();
+    if (detail) failSend(text, detail);
+  };
+  const hard = setTimeout(() => {
+    finish("沒有在時間內送出。文字還在，可以再試一次。");
+    confirmSend(text).then((session) => {
+      if (!session) return;
+      outbox = null;
+      draft.value = "";
       sendStatus.textContent = (session.office.messages ?? []).some((message) => message.delivery === "pending")
         ? "已送出，回覆還在路上。"
         : "";
+      render();
+    }).catch(() => {});
+  }, SEND_TIMEOUT_MS);
+  try {
+    const session = await withTimeout(async () => {
+      const response = await fetch("/api/office/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      await response.json().catch(() => null);
+      return confirmSend(text);
+    }, SEND_TIMEOUT_MS);
+    if (finished) return;
+    if (!session) {
+      finish("伺服器沒有收下這則。文字還在，可以再試一次。");
       return;
     }
-    failSend(text, controller.signal.aborted ? "沒有在時間內送出。文字還在，可以再試一次。" : "沒有送到伺服器。文字還在，可以再試一次。");
-  } finally {
-    clearTimeout(timer);
+    finished = true;
+    clearTimeout(hard);
+    sendStatus.textContent = (session.office.messages ?? []).some((message) => message.delivery === "pending")
+      ? "已送出，回覆還在路上。"
+      : "";
+  } catch (error) {
+    const timedOut = error?.name === "TimeoutError" || controller.signal.aborted;
+    finish(timedOut ? "沒有在時間內送出。文字還在，可以再試一次。" : "沒有送到伺服器。文字還在，可以再試一次。");
   }
 }
 
 async function hire(candidateId, button) {
   button.disabled = true;
   sendStatus.textContent = "Hire 送出中…";
+  let finished = false;
+  const done = (detail) => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(hard);
+    button.disabled = false;
+    sendStatus.textContent = detail;
+  };
+  const hard = setTimeout(() => done("Hire 沒有在時間內完成。可以再試一次。"), SEND_TIMEOUT_MS);
   try {
-    const response = await fetch("/api/office/hire", {
+    const response = await withTimeout(() => fetch("/api/office/hire", {
       method: "POST",
       headers: { "content-type": "application/json" },
+      cache: "no-store",
       body: JSON.stringify({ candidateId }),
-    });
+    }), SEND_TIMEOUT_MS);
     const payload = await response.json();
     if (!response.ok || !payload?.office) {
-      sendStatus.textContent = payload.message || `Hire 沒有完成（HTTP ${response.status}）。`;
-      button.disabled = false;
+      done(payload.message || `Hire 沒有完成（HTTP ${response.status}）。`);
       return;
     }
     const session = await readSession();
-    sendStatus.textContent = session ? "" : "Hire 的結果還沒從伺服器讀回。";
+    done(session ? "" : "Hire 的結果還沒從伺服器讀回。");
   } catch {
-    button.disabled = false;
-    sendStatus.textContent = "Hire 沒有送到伺服器。";
+    done("Hire 沒有送到伺服器。");
   }
 }
 
@@ -337,9 +378,39 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") readSession().catch(() => {});
 });
 
+function watchBuild() {
+  const loaded = document.querySelector('meta[name="ho-build"]')?.content || "";
+  if (!loaded) return;
+  const look = async () => {
+    try {
+      const response = await fetch("/api/office/build", { cache: "no-store" });
+      const body = await response.json();
+      if (!body.id || body.id === loaded || document.querySelector("#ho-reload")) return;
+      const note = document.createElement("p");
+      note.id = "ho-reload";
+      note.className = "ho-status";
+      note.textContent = "這頁有新版本。";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "重新載入";
+      button.addEventListener("click", () => location.reload());
+      note.append(button);
+      root.prepend(note);
+    } catch {
+      // The next look tries again. An old page keeps working until then.
+    }
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") look();
+  });
+  setInterval(look, 30000);
+  look();
+}
+
 readSession().catch(() => {
   sendStatus.textContent = "沒有送到伺服器。";
 });
+watchBuild();
 loadSettings().catch(() => {
   settingsStatus.textContent = "讀不到 Hermes 設定。";
 });
