@@ -162,6 +162,7 @@ export function createServer({
   }
 
   let lastGithubPoll = 0;
+  let githubCursor = 0;
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     try {
@@ -317,23 +318,38 @@ export function createServer({
         return;
       }
       if (req.method === "POST" && url.pathname === "/api/github/test") {
-        const result = await testGithubConnection(loadGithubSettings(githubFile), githubFetch);
+        const body = await readJson(req);
+        const settings = loadGithubSettings(githubFile);
+        const project = settings.projects.find((item) => item.id === body.projectId || `${item.owner}/${item.repo}` === body.projectId) || settings.projects[0];
+        const result = await testGithubConnection({
+          owner: project?.owner,
+          repo: project?.repo,
+          token: project?.token || settings.token,
+          projects: project ? [project] : [],
+        }, githubFetch);
         sendJson(res, result.ok ? 200 : 502, result);
+        return;
+      }
+      if (req.method === "POST" && url.pathname === "/api/github/active") {
+        const body = await readJson(req);
+        sendJson(res, 200, runtime.setActiveProject(body.projectId, body.role));
         return;
       }
       if (req.method === "POST" && url.pathname === "/api/github/refresh") {
         const settings = loadGithubSettings(githubFile);
+        const enabled = settings.projects.filter((project) => project.enabled);
         if (!url.searchParams.has("manual") && Date.now() - lastGithubPoll < settings.pollSeconds * 1000) {
           sendJson(res, 200, runtime.view());
           return;
         }
         lastGithubPoll = Date.now();
-        const result = await fetchIssues({ settings, fetchImpl: githubFetch, etag: runtime.snapshot().github?.etag });
-        if (!result.ok) {
-          sendJson(res, 502, { message: result.detail || "GitHub 沒有列出 issues。" });
-          return;
+        const batch = url.searchParams.has("manual") ? enabled : enabled.slice(githubCursor % Math.max(enabled.length, 1), (githubCursor % Math.max(enabled.length, 1)) + 1);
+        if (!url.searchParams.has("manual")) githubCursor += 1;
+        for (const project of batch) {
+          const etag = runtime.snapshot().github?.etags?.[project.id];
+          const result = await fetchIssues({ settings, project, fetchImpl: githubFetch, etag });
+          if (result.ok && !result.notModified) runtime.setGithubIssues(result.issues, result.etag, project.id);
         }
-        if (!result.notModified) runtime.setGithubIssues(result.issues, result.etag);
         sendJson(res, 200, runtime.view());
         return;
       }
@@ -465,7 +481,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.log(`IaC store: ${iac.dir}${iac.fallback ? " (fallback)" : ""}`);
     setInterval(() => {
       const settings = loadGithubSettings(githubFile);
-      if (!settings.token) return;
+      if (!settings.token && !settings.projects.some((project) => project.enabled && project.token)) return;
       fetch(`http://127.0.0.1:${port}/api/github/refresh`, { method: "POST" }).catch(() => {});
     }, 15000);
   });

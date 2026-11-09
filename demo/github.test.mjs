@@ -48,6 +48,8 @@ test("fixture issues use ETag and map labels to roles", async () => {
     },
   });
   assert.equal(first.issues[0].role, "BE");
+  assert.equal(first.issues[0].projectId, "codingXiang/HarnessOffice");
+  assert.equal(first.issues[0].labels[0].name, "ho");
   assert.equal(first.issues[0].number, 12);
   const second = await fetchIssues({
     settings: { token: "ghp-fixture" },
@@ -62,8 +64,17 @@ test("fixture issues use ETag and map labels to roles", async () => {
 });
 
 test("chat assigns an issue and a comment posts once", async () => {
-  assert.deepEqual(parseGithubCommand("@PM 把 #12 給 FE"), { type: "assign", number: 12, role: "FE", by: "PM" });
-  assert.deepEqual(parseGithubCommand("@FE 看一下 #12"), { type: "assign", number: 12, role: "FE", by: "FE" });
+  const give = parseGithubCommand("@PM 把 #12 給 FE");
+  assert.equal(give.role, "FE");
+  assert.equal(give.number, 12);
+  assert.equal(give.ref.number, 12);
+  const look = parseGithubCommand("@FE 看一下 ho#12");
+  assert.equal(look.role, "FE");
+  assert.equal(look.ref.alias, "ho");
+  const url = parseGithubCommand("@FE 看一下 https://github.com/codingXiang/Other/issues/12");
+  assert.equal(url.ref.owner, "codingXiang");
+  assert.equal(url.ref.repo, "Other");
+  assert.equal(url.number, 12);
   assert.equal(parseGithubCommand("@HR PM"), null);
   const body = commentBody("FE", "吳像素", "fixture：這則草稿不是模型回覆。", "harness-office:d12-FE");
   assert.match(body, /FE 吳像素/);
@@ -95,6 +106,30 @@ test("a pull request plan never targets the default branch", () => {
   assert.equal(plan.branch, "harness/12-fixture-board");
   assert.match(plan.body, /Closes #12/);
   assert.equal(pullRequestPlan({ number: 1, title: "main" }, "harness/1-main").ok, false);
+});
+
+test("an old single-repo file becomes a project list and #12 can name its repo", async () => {
+  const { loadGithubSettings, nextEnabledProject, resolveProject } = await import("./github.mjs");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ho-gh-migrate-"));
+  const file = path.join(dir, "github.json");
+  fs.writeFileSync(file, JSON.stringify({ owner: "codingXiang", repo: "HarnessOffice", token: "ghp-old", pollSeconds: 60 }));
+  const loaded = loadGithubSettings(file);
+  assert.equal(loaded.projects[0].id, "codingXiang/HarnessOffice");
+  assert.equal(loaded.token, "ghp-old");
+  assert.equal(publicGithubSettings(loaded).projects[0].tokenSet, false);
+  const projects = [
+    { id: "codingXiang/HarnessOffice", alias: "ho", owner: "codingXiang", repo: "HarnessOffice", enabled: true },
+    { id: "codingXiang/Other", alias: "other", owner: "codingXiang", repo: "Other", enabled: true },
+  ];
+  const issues = [
+    { number: 12, projectId: projects[0].id, alias: "ho", owner: "codingXiang", repo: "HarnessOffice", title: "fixture：甲" },
+    { number: 12, projectId: projects[1].id, alias: "other", owner: "codingXiang", repo: "Other", title: "fixture：乙" },
+  ];
+  assert.equal(resolveProject({ alias: "other", number: 12 }, { projects, issues }).project.id, "codingXiang/Other");
+  assert.equal(resolveProject({ owner: "codingXiang", repo: "HarnessOffice", number: 12 }, { projects, issues }).project.alias, "ho");
+  assert.ok(resolveProject({ number: 12 }, { projects, issues }).ambiguous);
+  assert.equal(resolveProject({ number: 12 }, { projects, issues, activeProjectId: "codingXiang/Other" }).project.alias, "other");
+  assert.equal(nextEnabledProject(projects, 1).alias, "other");
 });
 
 test("a connection check reports the repo and not the token", async () => {

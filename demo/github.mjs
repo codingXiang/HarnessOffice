@@ -17,6 +17,8 @@ export const DEFAULT_LABELS = {
 
 const ROLES = ["Tech Lead", "FE", "BE", "QA", "PM"];
 
+const PROJECT_COLORS = ["#118ab2", "#ef476f", "#06d6a0", "#ffd166", "#9b5de5", "#f78c6b"];
+
 export function emptyGithubSettings() {
   return {
     owner: "codingXiang",
@@ -25,33 +27,81 @@ export function emptyGithubSettings() {
     pollSeconds: 60,
     autoPost: false,
     labels: { ...DEFAULT_LABELS },
+    projects: [projectRecord({ owner: "codingXiang", repo: "HarnessOffice", alias: "ho" }, 0)],
+  };
+}
+
+function projectRecord(raw, index) {
+  const owner = String(raw?.owner || "").trim();
+  const repo = String(raw?.repo || "").trim();
+  return {
+    id: String(raw?.id || (owner && repo ? `${owner}/${repo}` : `project-${index}`)),
+    alias: String(raw?.alias || "").trim(),
+    owner,
+    repo,
+    token: String(raw?.token || ""),
+    enabled: raw?.enabled !== false,
+    labels: raw?.labels && typeof raw.labels === "object" ? { ...raw.labels } : null,
+    color: PROJECT_COLORS[index % PROJECT_COLORS.length],
   };
 }
 
 export function normalizeGithubSettings(raw) {
   const base = emptyGithubSettings();
   const poll = Number(raw?.pollSeconds);
+  const source = Array.isArray(raw?.projects)
+    ? raw.projects
+    : [{ owner: raw?.owner || base.owner, repo: raw?.repo || base.repo, alias: raw?.alias || "ho" }];
+  const projects = source.map(projectRecord).filter((item) => item.owner && item.repo);
+  const list = projects.length > 0 ? projects : base.projects;
   return {
-    owner: String(raw?.owner || base.owner).trim(),
-    repo: String(raw?.repo || base.repo).trim(),
+    owner: list[0].owner,
+    repo: list[0].repo,
     token: String(raw?.token || ""),
     pollSeconds: Number.isFinite(poll) ? Math.min(600, Math.max(15, poll)) : base.pollSeconds,
     autoPost: raw?.autoPost === true,
     labels: { ...base.labels, ...(raw?.labels ?? {}) },
+    projects: list,
   };
 }
 
 export function publicGithubSettings(settings) {
   const normalized = normalizeGithubSettings(settings);
   return {
-    configured: Boolean(normalized.token && normalized.owner && normalized.repo),
+    configured: normalized.projects.some((project) => project.enabled && (project.token || normalized.token)),
     owner: normalized.owner,
     repo: normalized.repo,
     pollSeconds: normalized.pollSeconds,
     autoPost: normalized.autoPost,
     labels: normalized.labels,
     tokenSet: normalized.token !== "",
+    projects: normalized.projects.map((project) => ({
+      id: project.id,
+      alias: project.alias,
+      owner: project.owner,
+      repo: project.repo,
+      enabled: project.enabled,
+      color: project.color,
+      labels: project.labels,
+      tokenSet: project.token !== "",
+      usesSharedToken: project.token === "",
+    })),
   };
+}
+
+export function tokenFor(settings, project) {
+  return project?.token || normalizeGithubSettings(settings).token || "";
+}
+
+export function labelsFor(settings, project) {
+  const normalized = normalizeGithubSettings(settings);
+  return { ...normalized.labels, ...(project?.labels || {}) };
+}
+
+export function nextEnabledProject(projects, cursor = 0) {
+  const enabled = (projects ?? []).filter((project) => project.enabled !== false);
+  if (enabled.length === 0) return null;
+  return enabled[((cursor % enabled.length) + enabled.length) % enabled.length];
 }
 
 export function resolveGithubFile({
@@ -92,15 +142,31 @@ export function loadGithubSettings(file, { readFileSync = fs.readFileSync } = {}
   }
 }
 
+function mergeProjectList(previous, update) {
+  if (Array.isArray(update?.projects)) {
+    return update.projects.map((item) => {
+      const prior = previous.projects.find((project) => project.id === item.id || (project.owner === item.owner && project.repo === item.repo));
+      return { ...prior, ...item, token: item.token ? item.token : (prior?.token || ""), labels: item.labels ?? prior?.labels ?? null };
+    });
+  }
+  if (update?.owner || update?.repo) {
+    const first = previous.projects[0] || {};
+    const owner = update.owner || first.owner;
+    const repo = update.repo || first.repo;
+    return [{ ...first, owner, repo, id: `${owner}/${repo}` }];
+  }
+  return previous.projects;
+}
+
 export function saveGithubSettings(file, update, deps = {}) {
   const previous = loadGithubSettings(file, deps);
   const next = normalizeGithubSettings({
     ...previous,
     ...update,
-    token: typeof update?.token === "string" && update.token !== "" ? update.token : previous.token,
+    token: update?.clearToken ? "" : (typeof update?.token === "string" && update.token !== "" ? update.token : previous.token),
     labels: { ...previous.labels, ...(update?.labels ?? {}) },
+    projects: mergeProjectList(previous, update),
   });
-  if (update?.clearToken) next.token = "";
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, `${JSON.stringify(next)}\n`, { mode: 0o600 });
@@ -178,24 +244,80 @@ export function toBoardIssue(issue, role) {
   };
 }
 
-export async function fetchIssues({ settings, fetchImpl, etag, timeoutMs = 20000 }) {
+export async function fetchIssues({ settings, project, fetchImpl, etag, timeoutMs = 20000 }) {
   const normalized = normalizeGithubSettings(settings);
-  if (!normalized.token) return { ok: false, detail: "尚未設定 GitHub token。" };
+  const target = project || normalized.projects[0];
+  const token = tokenFor(normalized, target);
+  if (!token) return { ok: false, detail: "尚未設定 GitHub token。" };
   let response;
   try {
     response = await fetchImpl(
-      `https://api.github.com/repos/${normalized.owner}/${normalized.repo}/issues?state=open&per_page=30`,
-      { headers: githubHeaders(normalized.token, etag), signal: AbortSignal.timeout(timeoutMs) },
+      `https://api.github.com/repos/${target.owner}/${target.repo}/issues?state=open&per_page=30`,
+      { headers: githubHeaders(token, etag), signal: AbortSignal.timeout(timeoutMs) },
     );
   } catch {
     return { ok: false, detail: "連不到 GitHub。" };
   }
-  if (response.status === 304) return { ok: true, notModified: true, etag };
+  if (response.status === 304) return { ok: true, notModified: true, etag, projectId: target.id };
   const raw = await response.text();
-  if (!response.ok) return { ok: false, status: response.status, detail: redactGithub(raw, normalized.token) };
+  if (!response.ok) return { ok: false, status: response.status, detail: redactGithub(raw, token) };
   const body = JSON.parse(raw);
-  const issues = body.filter((item) => !item.pull_request).map((item) => toBoardIssue(item, roleForLabels(item.labels, normalized.labels)));
-  return { ok: true, notModified: false, etag: response.headers.get("etag"), issues };
+  const issues = body.filter((item) => !item.pull_request).map((item) => {
+    const board = toBoardIssue(item, roleForLabels(item.labels, labelsFor(normalized, target)));
+    board.labels = [{ name: target.alias || target.repo, color: String(target.color || "#118ab2").replace("#", "") }, ...board.labels];
+    return {
+      ...board,
+      projectId: target.id,
+      alias: target.alias,
+      owner: target.owner,
+      repo: target.repo,
+      color: target.color,
+    };
+  });
+  return { ok: true, notModified: false, etag: response.headers.get("etag"), projectId: target.id, issues };
+}
+
+export function parseIssueRef(text) {
+  const source = String(text || "");
+  const url = source.match(/github\.com\/([^/\s]+)\/([^/\s]+)\/issues\/(\d+)/i);
+  if (url) return { owner: url[1], repo: url[2], number: Number(url[3]) };
+  const full = source.match(/(?:^|\s)([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)#(\d+)/);
+  if (full) return { owner: full[1], repo: full[2], number: Number(full[3]) };
+  const alias = source.match(/(?:^|\s)([A-Za-z][A-Za-z0-9_.-]*)#(\d+)/);
+  if (alias) return { alias: alias[1], number: Number(alias[2]) };
+  const plain = source.match(/#(\d+)/);
+  if (plain) return { number: Number(plain[1]) };
+  return null;
+}
+
+export function resolveProject(ref, { projects = [], issues = [], activeProjectId = null, botProjectId = null } = {}) {
+  const enabled = projects.filter((project) => project.enabled !== false);
+  if (ref?.owner && ref?.repo) {
+    const hit = enabled.find((project) => project.owner.toLowerCase() === ref.owner.toLowerCase() && project.repo.toLowerCase() === ref.repo.toLowerCase());
+    return hit ? { project: hit } : { missing: true };
+  }
+  if (ref?.alias) {
+    const hit = enabled.find((project) => project.alias.toLowerCase() === ref.alias.toLowerCase());
+    return hit ? { project: hit } : { missing: true };
+  }
+  const holders = issues.filter((issue) => issue.number === ref?.number);
+  const ids = [...new Set(holders.map((issue) => issue.projectId).filter(Boolean))];
+  const preferred = botProjectId || activeProjectId;
+  if (ids.length === 1) return { project: enabled.find((project) => project.id === ids[0]) || { id: ids[0] } };
+  if (ids.length > 1) {
+    if (preferred && ids.includes(preferred)) return { project: enabled.find((project) => project.id === preferred) };
+    return { ambiguous: holders.map((issue) => ({ projectId: issue.projectId, alias: issue.alias, owner: issue.owner, repo: issue.repo, number: issue.number, title: issue.title })) };
+  }
+  if (preferred) {
+    const hit = enabled.find((project) => project.id === preferred);
+    if (hit) return { project: hit };
+  }
+  if (enabled.length === 1) return { project: enabled[0] };
+  return { ambiguous: enabled.map((project) => ({ projectId: project.id, alias: project.alias, owner: project.owner, repo: project.repo, number: ref?.number })) };
+}
+
+export function repoWorktree(owner, repo, root = path.join(os.tmpdir(), "harness-office-repos")) {
+  return path.join(root, owner, repo);
 }
 
 function canonicalRole(token) {
@@ -207,10 +329,10 @@ export function parseGithubCommand(text) {
   const parsed = parseAddress(text);
   if (!parsed?.role) return null;
   const body = parsed.body || "";
+  const ref = parseIssueRef(body);
   const give = body.match(/#(\d+)\s*給\s*(Tech Lead|FE|BE|QA|PM)/i);
-  if (give) return { type: "assign", number: Number(give[1]), role: canonicalRole(give[2]), by: parsed.role };
-  const look = body.match(/看一下\s*#(\d+)/);
-  if (look) return { type: "assign", number: Number(look[1]), role: parsed.role, by: parsed.role };
+  if (give) return { type: "assign", number: Number(give[1]), role: canonicalRole(give[2]), by: parsed.role, ref };
+  if (/看一下/.test(body) && ref) return { type: "assign", number: ref.number, role: parsed.role, by: parsed.role, ref };
   return null;
 }
 

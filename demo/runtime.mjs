@@ -8,7 +8,7 @@ import {
   parseAddress,
   startMockCoding,
 } from "./office.mjs";
-import { commentBody, emptyGithubSettings, findOpencode, normalizeGithubSettings, opencodeCommand, parseGithubCommand, publishComment, pullRequestPlan } from "./github.mjs";
+import { commentBody, emptyGithubSettings, findOpencode, normalizeGithubSettings, opencodeCommand, parseGithubCommand, publishComment, pullRequestPlan, repoWorktree, resolveProject } from "./github.mjs";
 import { hireWithHermes, normalizeSettings, redactSecrets, streamBotTurn } from "./hermes.mjs";
 
 function freshRecord() {
@@ -20,7 +20,7 @@ function freshRecord() {
     clientIds: {},
     activity: {},
     seq: 0,
-    github: { issues: [], assignments: {}, drafts: [], pulls: [], etag: null, progress: {} },
+    github: { issues: [], assignments: {}, drafts: [], pulls: [], etags: {}, progress: {}, activeProjectId: null, botProjects: {}, choices: [] },
   };
 }
 
@@ -70,18 +70,24 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings = () =>
         drafts: (record.github?.drafts ?? []).filter((draft) => draft.status === "draft"),
         pulls: record.github?.pulls ?? [],
         progress: record.github?.progress ?? {},
+        activeProjectId: record.github?.activeProjectId ?? null,
+        botProjects: record.github?.botProjects ?? {},
+        choices: record.github?.choices ?? [],
       },
       revision: record.revision,
     };
   }
 
   function ensureGithub() {
-    record.github ??= { issues: [], assignments: {}, drafts: [], pulls: [], etag: null, progress: {} };
+    record.github ??= { issues: [], assignments: {}, drafts: [], pulls: [], etags: {}, progress: {}, activeProjectId: null, botProjects: {}, choices: [] };
     record.github.issues ??= [];
     record.github.assignments ??= {};
     record.github.drafts ??= [];
     record.github.pulls ??= [];
+    record.github.etags ??= {};
     record.github.progress ??= {};
+    record.github.botProjects ??= {};
+    record.github.choices ??= [];
   }
 
   function boot(saved) {
@@ -91,7 +97,7 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings = () =>
     record.ownedProfiles ??= [];
     record.clientIds ??= {};
     record.activity ??= {};
-    record.github ??= { issues: [], assignments: {}, drafts: [], pulls: [], etag: null, progress: {} };
+    record.github ??= { issues: [], assignments: {}, drafts: [], pulls: [], etags: {}, progress: {}, activeProjectId: null, botProjects: {}, choices: [] };
     record.seq ??= 0;
     record.revision ??= 0;
     interruptPending(record);
@@ -265,18 +271,28 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings = () =>
     return view();
   }
 
-  function setGithubIssues(issues, etag) {
+  function setGithubIssues(issues, etag, projectId = "codingXiang/HarnessOffice") {
     ensureGithub();
-    record.github.issues = issues;
-    if (etag) record.github.etag = etag;
+    const tagged = issues.map((issue) => ({ ...issue, projectId: issue.projectId || projectId }));
+    record.github.issues = record.github.issues.filter((issue) => issue.projectId !== projectId).concat(tagged);
+    if (etag) record.github.etags[projectId] = etag;
     touch();
     return view();
   }
 
-  async function draftComment(number, role) {
+  function setActiveProject(projectId, role) {
     ensureGithub();
-    const issue = record.github.issues.find((item) => item.number === number);
-    const id = `d${number}-${role}`;
+    record.github.activeProjectId = projectId;
+    if (role) record.github.botProjects[role] = projectId;
+    record.github.choices = [];
+    touch();
+    return view();
+  }
+
+  async function draftComment(number, role, projectId) {
+    ensureGithub();
+    const issue = record.github.issues.find((item) => item.number === number && (!projectId || item.projectId === projectId));
+    const id = `d${projectId || "repo"}-${number}-${role}`;
     const marker = `harness-office:${id}`;
     const bot = record.bots[role];
     if (!bot?.sessionId || bot.route !== "multiplex") {
@@ -297,7 +313,7 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings = () =>
       touch();
       return;
     }
-    const draft = { id, number, role, body: result.text, marker, status: "draft" };
+    const draft = { id, number, projectId: projectId || issue?.projectId || null, role, body: result.text, marker, status: "draft" };
     record.github.drafts = record.github.drafts.filter((item) => item.id !== id).concat(draft);
     const settings = normalizeGithubSettings(loadGithub());
     if (settings.autoPost) {
@@ -313,16 +329,17 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings = () =>
     const draft = record.github.drafts.find((item) => item.id === id && item.status === "draft");
     if (!draft) return { ok: false, status: 404, session: view(), message: "沒有這份草稿。" };
     const settings = normalizeGithubSettings(loadGithub());
-    if (!settings.token) {
+    const project = settings.projects.find((item) => item.id === draft.projectId) || settings.projects[0];
+    if (!project || !(project.token || settings.token)) {
       note("尚未設定 GitHub token，草稿沒有送出。");
       return { ok: false, status: 400, session: view(), message: "尚未設定 GitHub token，草稿沒有送出。" };
     }
     const bot = record.bots[draft.role];
     const posted = await publishComment({
-      settings,
+      settings: { ...settings, token: project.token || settings.token },
       fetchImpl,
-      owner: settings.owner,
-      repo: settings.repo,
+      owner: project.owner,
+      repo: project.repo,
       number: draft.number,
       marker: draft.marker,
       body: commentBody(draft.role, bot?.displayName, draft.body, draft.marker),
@@ -351,14 +368,16 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings = () =>
     ensureGithub();
     const existing = record.github.pulls.find((item) => item.issue === number && item.url);
     if (existing) return { ok: true, duplicate: true, session: view(), message: `PR 已開：${existing.url}` };
-    const assignment = record.github.assignments[number];
+    const assignment = Object.values(record.github.assignments).find((item) => item.number === number && (!item.projectId || item.projectId === record.github.activeProjectId))
+      || Object.values(record.github.assignments).find((item) => item.number === number);
     if (!assignment) {
       note(`#${number} 還沒有指派，沒有開 PR。`);
       return { ok: false, status: 400, session: view(), message: `#${number} 還沒有指派，沒有開 PR。` };
     }
     record.github.progress[assignment.role] = "分析中";
     touch();
-    const issue = record.github.issues.find((item) => item.number === number) || { number, title: assignment.title || `issue ${number}` };
+    const issue = record.github.issues.find((item) => item.number === number && item.projectId === assignment.projectId) || { number, title: assignment.title || `issue ${number}` };
+    const project = normalizeGithubSettings(loadGithub()).projects.find((item) => item.id === assignment.projectId);
     const plan = pullRequestPlan(issue, "main");
     if (!plan.ok) {
       record.github.progress[assignment.role] = "失敗";
@@ -374,8 +393,10 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings = () =>
     }
     record.github.progress[assignment.role] = "寫程式中";
     touch();
-    record.github.pulls.push({ issue: number, branch: plan.branch, url: "", status: "等待確認", command: opencodeCommand("", issue) });
-    note(`OpenCode 會在隔離的 worktree 跑 ${plan.branch}。還沒有 push。`);
+    const worktree = project ? repoWorktree(project.owner, project.repo) : "";
+    record.github.pulls.push({ issue: number, projectId: assignment.projectId, branch: plan.branch, url: "", status: "等待確認", command: opencodeCommand(worktree, issue) });
+    record.github.progress[assignment.role] = "等待確認";
+    note(`OpenCode 會在 ${worktree || "隔離的 worktree"} 跑 ${plan.branch}。還沒有 push。`);
     return { ok: true, session: view() };
   }
 
@@ -386,26 +407,49 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings = () =>
     const githubCommand = parseGithubCommand(body);
     if (githubCommand?.type === "assign") {
       ensureGithub();
+      const settings = normalizeGithubSettings(loadGithub());
+      const resolved = resolveProject(githubCommand.ref || { number: githubCommand.number }, {
+        projects: settings.projects,
+        issues: record.github.issues,
+        activeProjectId: record.github.activeProjectId,
+        botProjectId: record.github.botProjects[githubCommand.role],
+      });
+      record.office.messages.push({ from: "human", text: body, addressed: githubCommand.by });
+      if (resolved.ambiguous) {
+        record.github.choices = resolved.ambiguous.map((choice) => ({ ...choice, role: githubCommand.role }));
+        record.office.messages.push({ from: "system", text: `#${githubCommand.number} 出現在多個專案。點一個再指派。` });
+        touch();
+        return { ok: true, session: view() };
+      }
+      if (!resolved.project) {
+        record.office.messages.push({ from: "system", text: `找不到這個專案，沒有指派 #${githubCommand.number}。` });
+        touch();
+        return { ok: true, session: view() };
+      }
       if (!record.office.present.includes(githubCommand.role)) {
-        record.office.messages.push({ from: "human", text: body, addressed: githubCommand.by });
         record.office.messages.push({ from: "system", text: `${githubCommand.role} 還不在 Office 裡。沒有指派 #${githubCommand.number}。` });
         touch();
         return { ok: true, session: view() };
       }
-      const issue = record.github.issues.find((item) => item.number === githubCommand.number);
-      record.github.assignments[githubCommand.number] = {
+      const projectId = resolved.project?.id || settings.projects[0]?.id;
+      const issue = record.github.issues.find((item) => item.number === githubCommand.number && item.projectId === projectId);
+      const key = `${projectId}#${githubCommand.number}`;
+      record.github.assignments[key] = {
         number: githubCommand.number,
+        projectId,
         role: githubCommand.role,
         title: issue?.title || `#${githubCommand.number}`,
         url: issue?.url || "",
       };
+      record.github.activeProjectId = projectId;
+      record.github.botProjects[githubCommand.role] = projectId;
+      record.github.choices = [];
       record.activity[githubCommand.role] = "working";
       record.github.progress[githubCommand.role] = `working on #${githubCommand.number}`;
-      record.office.messages.push({ from: "human", text: body, addressed: githubCommand.by });
-      record.office.messages.push({ from: "system", text: `已把 #${githubCommand.number} 交給 ${githubCommand.role}。` });
+      record.office.messages.push({ from: "system", text: `已把 ${resolved.project?.alias || projectId}#${githubCommand.number} 交給 ${githubCommand.role}。` });
       if (clientMessageId) record.clientIds[clientMessageId] = "github";
       touch();
-      const drafting = draftComment(githubCommand.number, githubCommand.role);
+      const drafting = draftComment(githubCommand.number, githubCommand.role, projectId);
       if (wait) await drafting;
       return { ok: true, session: view() };
     }
@@ -469,6 +513,7 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings = () =>
     hireCandidate,
     postMessage,
     setGithubIssues,
+    setActiveProject,
     publishDraft,
     discardDraft,
     openPullRequest,

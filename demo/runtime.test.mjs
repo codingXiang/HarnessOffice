@@ -232,9 +232,35 @@ test("assigning a fixture issue does not invent a GitHub comment", async () => {
   await runtime.hireCandidate("fe-wu");
   runtime.setGithubIssues([{ number: 12, title: "fixture：看板", url: "https://github.com/codingXiang/HarnessOffice/issues/12" }], "W/\"fixture\"");
   const assigned = await runtime.postMessage({ text: "@FE 看一下 #12" });
-  assert.equal(assigned.session.github.assignments[12].role, "FE");
+  assert.equal(Object.values(assigned.session.github.assignments).find((item) => item.number === 12).role, "FE");
   assert.match(assigned.session.office.messages.at(-1).text, /沒有寫 GitHub 草稿/);
   const shot = visualSnapshot(assigned.session);
   assert.equal(shot.roles.find((role) => role.role === "FE").text, "working on #12");
   assert.equal(shot.issues[0].number, 12);
+});
+
+test("the same issue number in two fixture repos asks which project, then a repo reference assigns once", async () => {
+  const runtime = createOfficeRuntime({
+    templates,
+    loadGithub: () => ({
+      token: "",
+      projects: [
+        { id: "codingXiang/HarnessOffice", alias: "ho", owner: "codingXiang", repo: "HarnessOffice", enabled: true },
+        { id: "codingXiang/Other", alias: "other", owner: "codingXiang", repo: "Other", enabled: true },
+      ],
+    }),
+  });
+  runtime.boot(null);
+  await runtime.postMessage({ text: "@HR 請幫我 hire FE" });
+  await runtime.hireCandidate("fe-wu");
+  runtime.setGithubIssues([{ number: 12, title: "fixture：甲", owner: "codingXiang", repo: "HarnessOffice", alias: "ho" }], "W/\"a\"", "codingXiang/HarnessOffice");
+  runtime.setGithubIssues([{ number: 12, title: "fixture：乙", owner: "codingXiang", repo: "Other", alias: "other" }], "W/\"b\"", "codingXiang/Other");
+  const asked = await runtime.postMessage({ text: "@FE 看一下 #12" });
+  assert.equal(Object.keys(asked.session.github.assignments).length, 0);
+  assert.equal(asked.session.github.choices.length, 2);
+  const chosen = await runtime.postMessage({ text: "@FE 看一下 codingXiang/Other#12" });
+  const assignment = Object.values(chosen.session.github.assignments).find((item) => item.number === 12);
+  assert.equal(assignment.projectId, "codingXiang/Other");
+  assert.equal(chosen.session.github.activeProjectId, "codingXiang/Other");
+  assert.equal(chosen.session.github.botProjects.FE, "codingXiang/Other");
 });

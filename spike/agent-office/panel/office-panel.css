@@ -113,3 +113,12 @@
   flex-wrap: wrap;
   gap: 6px;
 }
+
+#ho-office .ho-project {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 0;
+  border-top: 1px solid #d9d3c7;
+}
