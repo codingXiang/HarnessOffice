@@ -302,7 +302,12 @@ export function createServer({
         const body = await readJson(req);
         const result = await runtime.hireCandidate(body.candidateId);
         if (result.profile) writeProfile(iac.dir, result.profile);
-        sendJson(res, result.ok ? 201 : result.status ?? 400, result.session ?? { error: "bad-request" });
+        const payload = result.session ?? { error: "bad-request" };
+        if (!result.ok) {
+          const last = [...(payload.office?.messages ?? [])].reverse().find((message) => message.from === "system" || message.from === "HR");
+          payload.message = last?.text || "現在沒有可以 Hire 的 Candidate。請先 @HR 提出一個 Role。";
+        }
+        sendJson(res, result.ok ? 201 : result.status ?? 400, payload);
         return;
       }
       if (req.method === "POST" && url.pathname === "/api/session/cancel") {

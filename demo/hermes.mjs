@@ -250,7 +250,7 @@ export async function hireWithHermes({
   template,
   fetchImpl,
   ownsProfile = false,
-  timeoutMs = 8000,
+  timeoutMs = 20000,
 }) {
   const normalized = normalizeSettings(settings);
   const localProfile = (createdBy, hermes) => ({

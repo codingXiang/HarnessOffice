@@ -43,6 +43,7 @@ function interruptPending(record) {
 export function createOfficeRuntime({ templates, fetchImpl, loadSettings, onChange } = {}) {
   let record = freshRecord();
   const turns = new Map();
+  const hiring = new Set();
 
   function touch() {
     stamp(record);
@@ -131,12 +132,19 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings, onChan
   async function hireCandidate(candidateId) {
     const pending = record.office.pendingCandidates;
     const candidate = pending?.options.find((item) => item.id === candidateId) ?? null;
-    if (!candidate) {
-      note("還沒有可以選定的 Candidate。");
+    if (!candidate || record.office.present.includes(pending.role)) {
+      note(record.office.present.includes(pending?.role) ? `${pending.role} 已經在 Office 裡。` : "還沒有可以選定的 Candidate。請先 @HR 提出一個 Role，例如 @HR 請幫我 hire FE。");
       return { ok: false, status: 400, session: view() };
     }
+    if (hiring.has(candidateId)) {
+      note("這個 Candidate 正在建立，請稍候。");
+      return { ok: true, status: 202, session: view() };
+    }
+    hiring.add(candidateId);
     const template = templates[pending.role];
-    const outcome = await hireWithHermes({
+    let outcome;
+    try {
+      outcome = await hireWithHermes({
       settings: loadSettings(),
       role: pending.role,
       candidateId: candidate.id,
@@ -146,6 +154,9 @@ export function createOfficeRuntime({ templates, fetchImpl, loadSettings, onChan
       ownsProfile: (record.ownedProfiles ?? []).includes(candidate.id)
         || Object.values(record.bots).some((bot) => bot.profileName === candidate.id),
     });
+    } finally {
+      hiring.delete(candidateId);
+    }
     if (outcome.ownedProfile) {
       record.ownedProfiles = [...new Set([...(record.ownedProfiles ?? []), outcome.ownedProfile])];
       touch();

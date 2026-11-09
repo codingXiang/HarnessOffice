@@ -224,6 +224,9 @@ test("the office page is the chat client and does not return a Hermes secret", a
   assert.match(panel, /尚未寫入伺服器/);
   assert.match(panel, /再試一次/);
   assert.match(panel, /roleChoices/);
+  assert.match(panel, /建立中/);
+  assert.match(panel, /請先 @HR 提出 Candidate/);
+  assert.equal(panel.includes("HTTP ${"), false);
   assert.match(panel, /function withTimeout/);
   assert.match(panel, /\/api\/office\/build/);
   assert.match(withOfficePanel("<html><body></body></html>", "abc123"), /name="ho-build" content="abc123"/);

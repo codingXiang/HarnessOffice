@@ -152,11 +152,11 @@ export function requestCandidates(session, role) {
     next.pendingCandidates = null;
     return { session: next, candidates: null };
   }
-  const options = MOCK_CANDIDATES[role].map((candidate) => ({ ...candidate }));
+  const options = [{ ...MOCK_CANDIDATES[role][0] }];
   next.pendingCandidates = { role, options };
   next.messages.push({
     from: "HR",
-    text: `這是 ${role} 的 Candidate（Mock mode，沒有呼叫模型，也沒有 OpenCode）。選定之前不會 Hire。`,
+    text: `${role} 的 Candidate 是${options[0].displayName}。按下 Hire 就建立 Hermes Bot。`,
   });
   return { session: next, candidates: options };
 }

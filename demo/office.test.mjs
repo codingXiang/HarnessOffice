@@ -123,6 +123,19 @@ test("@ address parses Tech Lead as one Role", () => {
   assert.equal(parseAddress("Tech Lead"), null);
 });
 
+test("asking HR to hire FE proposes one candidate and one Hire", () => {
+  const asked = handleHumanMessage(createSession(), "@HR 請幫我 hire FE", templates);
+  assert.equal(asked.session.pendingCandidates.role, "FE");
+  assert.equal(asked.session.pendingCandidates.options.length, 1);
+  assert.equal(asked.session.pendingCandidates.options[0].id, "fe-wu");
+  assert.match(asked.session.messages.at(-1).text, /吳像素/);
+  assert.equal(asked.session.present.includes("FE"), false);
+  const hired = hire(asked.session, "fe-wu", templates);
+  assert.equal(hired.session.present.includes("FE"), true);
+  const again = hire(hired.session, "fe-wu", templates);
+  assert.match(again.session.messages.at(-1).text, /還沒有可以選定的 Candidate|已經在 Office/);
+});
+
 test("HR understands a natural hire request and offers choices when it cannot", () => {
   const hired = handleHumanMessage(createSession(), "@HR 請幫我 hire tech lead", templates);
   assert.equal(hired.session.pendingCandidates.role, "Tech Lead");

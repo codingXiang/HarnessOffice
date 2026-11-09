@@ -113,15 +113,23 @@ function render() {
     candidates.append(button);
   }
   const pending = office.pendingCandidates;
-  if (pending?.options) {
-    for (const candidate of pending.options) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = `Hire ${candidate.displayName} · ${pending.role}`;
-      button.addEventListener("click", () => hire(candidate.id, button));
-      candidates.append(button);
-    }
+  const offered = pending?.role && !(office.present ?? []).includes(pending.role) ? pending.options?.[0] : null;
+  const hireButton = document.createElement("button");
+  hireButton.type = "button";
+  hireButton.id = "ho-hire";
+  if (offered) {
+    hireButton.textContent = `Hire ${offered.displayName} · ${pending.role}`;
+    hireButton.addEventListener("click", () => hire(offered.id, hireButton));
+  } else {
+    hireButton.textContent = "Hire";
+    hireButton.disabled = true;
   }
+  const hireHint = document.createElement("p");
+  hireHint.className = "ho-status";
+  hireHint.textContent = offered
+    ? `按下 Hire 就建立 ${pending.role} 的 Hermes Bot。`
+    : "請先 @HR 提出 Candidate，例如 @HR 請幫我 hire FE。";
+  candidates.append(hireButton, hireHint);
 }
 
 function adopt(session) {
@@ -237,9 +245,18 @@ async function send(text) {
   }
 }
 
+const HIRE_TIMEOUT_MS = 45000;
+
 async function hire(candidateId, button) {
+  const pending = confirmed?.office?.pendingCandidates;
+  const allowed = pending?.options?.some((item) => item.id === candidateId)
+    && !(confirmed.office.present ?? []).includes(pending.role);
+  if (!allowed) {
+    sendStatus.textContent = "請先 @HR 提出 Candidate，例如 @HR 請幫我 hire FE。";
+    return;
+  }
   button.disabled = true;
-  sendStatus.textContent = "Hire 送出中…";
+  sendStatus.textContent = "建立中";
   let finished = false;
   const done = (detail) => {
     if (finished) return;
@@ -248,23 +265,30 @@ async function hire(candidateId, button) {
     button.disabled = false;
     sendStatus.textContent = detail;
   };
-  const hard = setTimeout(() => done("Hire 沒有在時間內完成。可以再試一次。"), SEND_TIMEOUT_MS);
+  const hard = setTimeout(() => done("建立還在進行。可以再按一次 Hire，不會重複建立 profile。"), HIRE_TIMEOUT_MS);
   try {
     const response = await withTimeout(() => fetch("/api/office/hire", {
       method: "POST",
       headers: { "content-type": "application/json" },
       cache: "no-store",
       body: JSON.stringify({ candidateId }),
-    }), SEND_TIMEOUT_MS);
-    const payload = await response.json();
-    if (!response.ok || !payload?.office) {
-      done(payload.message || `Hire 沒有完成（HTTP ${response.status}）。`);
+    }), HIRE_TIMEOUT_MS);
+    const payload = await response.json().catch(() => ({}));
+    if (payload?.office) adopt(payload);
+    if (!response.ok) {
+      done(payload.message || "現在沒有可以 Hire 的 Candidate。請先 @HR 提出一個 Role。");
       return;
     }
     const session = await readSession();
-    done(session ? "" : "Hire 的結果還沒從伺服器讀回。");
+    const present = session?.office?.present ?? [];
+    done(present.includes(pending.role) ? "" : "建立的結果還沒從伺服器讀回。可以再按一次 Hire。");
   } catch {
-    done("Hire 沒有送到伺服器。");
+    const session = await readSession().catch(() => null);
+    if ((session?.office?.present ?? []).includes(pending.role)) {
+      done("");
+      return;
+    }
+    done("建立沒有在時間內完成。可以再按一次 Hire，不會重複建立 profile。");
   }
 }
 
@@ -359,7 +383,7 @@ root.querySelector("#ho-probe").addEventListener("click", async () => {
   settingsStatus.textContent = "正在檢查連線…";
   const response = await fetch("/api/office/hermes/probe", { method: "POST" });
   const payload = await response.json();
-  settingsStatus.textContent = payload.message || payload.mode || payload.state || `HTTP ${response.status}`;
+  settingsStatus.textContent = payload.message || payload.mode || payload.state || "連線檢查沒有完成。";
 });
 
 const stream = new EventSource("/api/office/events");
