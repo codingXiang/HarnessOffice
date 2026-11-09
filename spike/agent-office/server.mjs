@@ -323,7 +323,7 @@ export function createSpikeServer({
         return;
       }
       if (req.method === "GET" && url.pathname === "/api/office/session") {
-        await proxyChat(res, "/api/session");
+        await proxyChat(res, `/api/session${url.search}`);
         return;
       }
       if (req.method === "POST" && url.pathname === "/api/office/messages") {
@@ -351,15 +351,15 @@ export function createSpikeServer({
         return;
       }
       if (req.method === "POST" && url.pathname === "/api/office/github/test") {
-        await proxyChat(res, "/api/github/test", { method: "POST", timeoutMs: 20000, redact: true });
+        await proxyChat(res, "/api/github/test", { method: "POST", body: await readJson(req), timeoutMs: 20000, redact: true });
         return;
       }
       if (req.method === "POST" && url.pathname === "/api/office/github/refresh") {
-        await proxyChat(res, "/api/github/refresh?manual=1", { method: "POST", timeoutMs: 20000 });
+        await proxyChat(res, `/api/github/refresh?manual=1&${url.searchParams.toString()}`, { method: "POST", body: await readJson(req), timeoutMs: 20000 });
         return;
       }
       if (req.method === "POST" && url.pathname.startsWith("/api/office/github/")) {
-        await proxyChat(res, url.pathname.replace("/api/office/github/", "/api/github/"), { method: "POST", timeoutMs: 20000 });
+        await proxyChat(res, `${url.pathname.replace("/api/office/github/", "/api/github/")}${url.search}`, { method: "POST", body: await readJson(req), timeoutMs: 20000 });
         return;
       }
       if (req.method === "POST" && url.pathname === "/api/office/hermes/probe") {

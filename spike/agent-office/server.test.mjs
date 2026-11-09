@@ -238,7 +238,8 @@ test("the office page is the chat client and does not return a Hermes secret", a
   const scene = fs.readFileSync(new URL("../../vendor/agent-office/src/client/core/scene.ts", import.meta.url), "utf8");
   assert.match(loop, /player\.view === 'spectator' && f\.now - lastSpectatorDraw < 100/);
   assert.match(scene, /setPixelRatio\(1\)/);
-  assert.equal(panel.includes("localStorage"), false);
+  assert.match(panel, /localStorage\.setItem\(PROJECT_KEY, id\)/);
+  assert.equal(panel.includes("localStorage.setItem(\"token\""), false);
   const calls = [];
   const server = createSpikeServer({
     clientDist: null,

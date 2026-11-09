@@ -141,7 +141,7 @@ test("a pending Hermes turn is marked interrupted after restart and is not resen
   runtime.boot(null);
   await hirePm(runtime);
   const saved = runtime.snapshot();
-  saved.office.messages.push({ id: "m-pending", from: "system", text: "PM 正在透過 Hermes 回覆…", delivery: "pending" });
+  saved.projects["harness-office"].office.messages.push({ id: "m-pending", from: "system", text: "PM 正在透過 Hermes 回覆…", delivery: "pending" });
   const restarted = createOfficeRuntime({
     templates,
     fetchImpl: async () => {
@@ -239,28 +239,52 @@ test("assigning a fixture issue does not invent a GitHub comment", async () => {
   assert.equal(shot.issues[0].number, 12);
 });
 
-test("the same issue number in two fixture repos asks which project, then a repo reference assigns once", async () => {
+test("a saved office becomes the default project, and another project hires its own bot", async () => {
+  const calls = [];
   const runtime = createOfficeRuntime({
     templates,
+    fetchImpl: liveFetch(calls),
+    loadSettings: () => ({ apiBase: "https://hermes.example", token: "desk-token", dashboardToken: "dash-explicit", group: { name: "HarnessOffice" } }),
     loadGithub: () => ({
       token: "",
       projects: [
-        { id: "codingXiang/HarnessOffice", alias: "ho", owner: "codingXiang", repo: "HarnessOffice", enabled: true },
-        { id: "codingXiang/Other", alias: "other", owner: "codingXiang", repo: "Other", enabled: true },
+        { id: "harness-office", name: "HarnessOffice", group: "主群", repos: [{ owner: "codingXiang", repo: "HarnessOffice", alias: "ho" }] },
+        { id: "other", name: "另一個", group: "另一個群", repos: [{ owner: "codingXiang", repo: "Other", alias: "other" }] },
       ],
     }),
   });
-  runtime.boot(null);
-  await runtime.postMessage({ text: "@HR 請幫我 hire FE" });
-  await runtime.hireCandidate("fe-wu");
-  runtime.setGithubIssues([{ number: 12, title: "fixture：甲", owner: "codingXiang", repo: "HarnessOffice", alias: "ho" }], "W/\"a\"", "codingXiang/HarnessOffice");
+  runtime.boot({
+    office: {
+      present: ["HR", "QA"],
+      messages: [{ from: "QA", text: "fixture：原本的對話" }],
+      pendingCandidates: null,
+      issue: null,
+      assignments: [],
+      phase: "idle",
+      mockPr: null,
+    },
+    bots: { QA: { profileName: "qa-he", sessionId: "ho-qa-he", route: "multiplex", displayName: "何驗" } },
+    github: { issues: [{ number: 3, title: "keep" }], assignments: {} },
+  });
+  const kept = runtime.view();
+  assert.equal(kept.projectId, "harness-office");
+  assert.equal(kept.group, "主群");
+  assert.ok(kept.office.present.includes("QA"));
+  assert.match(kept.office.messages.at(-1).text, /原本的對話/);
+  assert.equal(kept.bots.QA.profileName, "qa-he");
+  assert.equal(kept.github.issues[0].number, 3);
+  await runtime.postMessage({ text: "@HR 請幫我 hire FE", projectId: "other" });
+  await runtime.hireCandidate("fe-wu", "other");
+  assert.ok(runtime.view("other").office.present.includes("FE"));
+  assert.equal(runtime.view("other").bots.FE.profileName, "other--fe-wu");
+  assert.equal(runtime.view("harness-office").office.present.includes("FE"), false);
   runtime.setGithubIssues([{ number: 12, title: "fixture：乙", owner: "codingXiang", repo: "Other", alias: "other" }], "W/\"b\"", "codingXiang/Other");
-  const asked = await runtime.postMessage({ text: "@FE 看一下 #12" });
-  assert.equal(Object.keys(asked.session.github.assignments).length, 0);
-  assert.equal(asked.session.github.choices.length, 2);
-  const chosen = await runtime.postMessage({ text: "@FE 看一下 codingXiang/Other#12" });
-  const assignment = Object.values(chosen.session.github.assignments).find((item) => item.number === 12);
-  assert.equal(assignment.projectId, "codingXiang/Other");
-  assert.equal(chosen.session.github.activeProjectId, "codingXiang/Other");
-  assert.equal(chosen.session.github.botProjects.FE, "codingXiang/Other");
+  const paused = await runtime.postMessage({ text: "@FE 看一下 https://github.com/codingXiang/Other/issues/12", projectId: "harness-office", typing: true });
+  assert.equal(paused.session.projectId, "harness-office");
+  assert.equal(paused.session.switchOffer.projectId, "other");
+  assert.equal(runtime.view("harness-office").notices[0].projectId, "other");
+  const moved = await runtime.postMessage({ text: "@FE 看一下 codingXiang/Other#12", projectId: "harness-office" });
+  assert.equal(moved.session.projectId, "other");
+  assert.equal(Object.values(moved.session.github.assignments).find((item) => item.number === 12).role, "FE");
+  assert.equal(runtime.view("harness-office").office.messages.some((message) => String(message.text).includes("codingXiang/Other")), false);
 });

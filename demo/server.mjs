@@ -3,7 +3,7 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isConfigured, probeHermes, hireWithHermes, redactSecrets } from "./hermes.mjs";
-import { fetchIssues, loadGithubSettings, publicGithubSettings, resolveGithubFile, saveGithubSettings, testGithubConnection } from "./github.mjs";
+import { enabledRepos, fetchIssues, loadGithubSettings, publicGithubSettings, resolveGithubFile, saveGithubSettings, testGithubConnection } from "./github.mjs";
 import { loadHermesSettings, publicHermesSettings, resolveHermesSettingsFile, saveHermesSettings } from "./hermes-settings.mjs";
 import { resolveIacDir, writeProfile } from "./iac.mjs";
 import { isAgentEvent } from "./pixel-office-events.mjs";
@@ -273,7 +273,9 @@ export function createServer({
         return;
       }
       if (req.method === "GET" && url.pathname === "/api/session") {
-        sendJson(res, 200, runtime.view());
+        const requested = url.searchParams.get("project");
+        if (requested) runtime.setActiveProject(requested);
+        sendJson(res, 200, runtime.view(requested || undefined));
         return;
       }
       if (req.method === "GET" && url.pathname === "/api/session/visual") {
@@ -297,6 +299,8 @@ export function createServer({
           text: body.text,
           clientMessageId: body.clientMessageId,
           wait: url.searchParams.get("wait") !== "0",
+          projectId: body.projectId || url.searchParams.get("project") || undefined,
+          typing: body.typing === true,
         });
         if (result.profile) writeProfile(iac.dir, result.profile);
         const lastHuman = [...(result.session?.office?.messages ?? [])].reverse().find((message) => message.from === "human");
@@ -314,18 +318,21 @@ export function createServer({
           sendJson(res, 500, { message: "GitHub 設定檔沒有位置。" });
           return;
         }
-        sendJson(res, 200, saveGithubSettings(githubFile, body));
+        const saved = saveGithubSettings(githubFile, body);
+        runtime.syncProjects(saved.projects, { remove: true });
+        sendJson(res, 200, saved);
         return;
       }
       if (req.method === "POST" && url.pathname === "/api/github/test") {
         const body = await readJson(req);
         const settings = loadGithubSettings(githubFile);
-        const project = settings.projects.find((item) => item.id === body.projectId || `${item.owner}/${item.repo}` === body.projectId) || settings.projects[0];
+        const repos = enabledRepos(settings);
+        const repo = repos.find((item) => item.id === body.projectId || item.id === body.repoId || `${item.owner}/${item.repo}` === body.projectId) || repos[0];
         const result = await testGithubConnection({
-          owner: project?.owner,
-          repo: project?.repo,
-          token: project?.token || settings.token,
-          projects: project ? [project] : [],
+          owner: repo?.owner,
+          repo: repo?.repo,
+          token: repo?.token || settings.token,
+          projects: repo ? [{ id: repo.officeProjectId, name: repo.officeProjectId, group: repo.officeProjectId, repos: [repo] }] : [],
         }, githubFetch);
         sendJson(res, result.ok ? 200 : 502, result);
         return;
@@ -337,20 +344,20 @@ export function createServer({
       }
       if (req.method === "POST" && url.pathname === "/api/github/refresh") {
         const settings = loadGithubSettings(githubFile);
-        const enabled = settings.projects.filter((project) => project.enabled);
+        const enabled = enabledRepos(settings);
         if (!url.searchParams.has("manual") && Date.now() - lastGithubPoll < settings.pollSeconds * 1000) {
-          sendJson(res, 200, runtime.view());
+          sendJson(res, 200, runtime.view(url.searchParams.get("project") || undefined));
           return;
         }
         lastGithubPoll = Date.now();
         const batch = url.searchParams.has("manual") ? enabled : enabled.slice(githubCursor % Math.max(enabled.length, 1), (githubCursor % Math.max(enabled.length, 1)) + 1);
         if (!url.searchParams.has("manual")) githubCursor += 1;
-        for (const project of batch) {
-          const etag = runtime.snapshot().github?.etags?.[project.id];
-          const result = await fetchIssues({ settings, project, fetchImpl: githubFetch, etag });
-          if (result.ok && !result.notModified) runtime.setGithubIssues(result.issues, result.etag, project.id);
+        for (const repo of batch) {
+          const etag = runtime.snapshot().projects?.[repo.officeProjectId]?.github?.etags?.[repo.id];
+          const result = await fetchIssues({ settings, project: repo, fetchImpl: githubFetch, etag });
+          if (result.ok && !result.notModified) runtime.setGithubIssues(result.issues, result.etag, repo.id);
         }
-        sendJson(res, 200, runtime.view());
+        sendJson(res, 200, runtime.view(url.searchParams.get("project") || undefined));
         return;
       }
       if (req.method === "POST" && url.pathname.startsWith("/api/github/drafts/") && url.pathname.endsWith("/publish")) {
@@ -373,7 +380,7 @@ export function createServer({
       }
       if (req.method === "POST" && url.pathname === "/api/session/hire") {
         const body = await readJson(req);
-        const result = await runtime.hireCandidate(body.candidateId);
+        const result = await runtime.hireCandidate(body.candidateId, body.projectId);
         if (result.profile) writeProfile(iac.dir, result.profile);
         const payload = result.session ?? { error: "bad-request" };
         if (!result.ok) {
@@ -481,7 +488,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.log(`IaC store: ${iac.dir}${iac.fallback ? " (fallback)" : ""}`);
     setInterval(() => {
       const settings = loadGithubSettings(githubFile);
-      if (!settings.token && !settings.projects.some((project) => project.enabled && project.token)) return;
+      if (!settings.token && !enabledRepos(settings).some((repo) => repo.token)) return;
       fetch(`http://127.0.0.1:${port}/api/github/refresh`, { method: "POST" }).catch(() => {});
     }, 15000);
   });

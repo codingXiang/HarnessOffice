@@ -46,6 +46,29 @@ root.innerHTML = `
 `;
 document.body.append(root);
 
+const PROJECT_KEY = "ho-active-project";
+
+function currentProject() {
+  try {
+    return localStorage.getItem(PROJECT_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function rememberProject(id) {
+  try {
+    if (id) localStorage.setItem(PROJECT_KEY, id);
+  } catch {
+    // A private window still shows the project returned by the server.
+  }
+}
+
+function sessionUrl() {
+  const id = currentProject();
+  return id ? `/api/office/session?project=${encodeURIComponent(id)}` : "/api/office/session";
+}
+
 const log = root.querySelector("#ho-log");
 const roles = root.querySelector("#ho-roles");
 const candidates = root.querySelector("#ho-candidates");
@@ -144,30 +167,63 @@ function render() {
     ? `按下 Hire 就建立 ${pending.role} 的 Hermes Bot。`
     : "請先 @HR 提出 Candidate，例如 @HR 請幫我 hire FE。";
   candidates.append(hireButton, hireHint);
-  renderGithub(confirmed?.github);
+  renderGithub(confirmed);
 }
 
 let issueFilter = "all";
 
-function renderGithub(github) {
+function renderGithub(session) {
+  const github = session?.github;
   const box = root.querySelector("#ho-github");
   box.replaceChildren();
   const issues = github?.issues ?? [];
-  const active = github?.activeProjectId;
   const title = document.createElement("p");
   title.className = "ho-status";
-  title.textContent = active ? `目前專案 ${active}` : "目前專案：尚未選定";
+  title.textContent = session?.projectName ? `目前專案 ${session.projectName} · ${session.group || ""}` : "目前專案：HarnessOffice";
   box.append(title);
+  const switcher = document.createElement("div");
+  switcher.className = "ho-row";
+  for (const project of session?.projects || []) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = project.name || project.id;
+    button.disabled = project.id === session.projectId;
+    button.addEventListener("click", () => {
+      rememberProject(project.id);
+      githubAction("/api/office/github/active", { projectId: project.id });
+    });
+    switcher.append(button);
+  }
+  if (session?.switchOffer) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = `切換到 ${session.switchOffer.name}`;
+    button.addEventListener("click", () => {
+      rememberProject(session.switchOffer.projectId);
+      send(session.switchOffer.text);
+    });
+    switcher.append(button);
+  }
+  for (const notice of session?.notices || []) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = `切換到 ${notice.name}`;
+    button.addEventListener("click", () => {
+      rememberProject(notice.projectId);
+      readSession();
+    });
+    switcher.append(button);
+  }
+  box.append(switcher);
   const filters = document.createElement("div");
   filters.className = "ho-row";
-  for (const id of ["all", ...new Set(issues.map((issue) => issue.projectId).filter(Boolean))]) {
+  for (const id of ["all", ...new Set(issues.map((issue) => issue.repo || issue.alias).filter(Boolean))]) {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = id === "all" ? "All" : id;
     button.addEventListener("click", () => {
       issueFilter = id;
-      if (id !== "all") githubAction(`/api/office/github/active`, { projectId: id });
-      else render();
+      render();
     });
     filters.append(button);
   }
@@ -176,10 +232,13 @@ function renderGithub(github) {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = `${choice.alias || choice.projectId}#${choice.number}`;
-    button.addEventListener("click", () => send(`@${choice.role} 看一下 ${choice.owner}/${choice.repo}#${choice.number}`));
+    button.addEventListener("click", () => {
+      if (choice.projectId) rememberProject(choice.projectId);
+      send(`@${choice.role} 看一下 ${choice.owner}/${choice.repo}#${choice.number}`);
+    });
     box.append(button);
   }
-  const visible = issues.filter((issue) => issueFilter === "all" || issue.projectId === issueFilter);
+  const visible = issues.filter((issue) => issueFilter === "all" || issue.repo === issueFilter || issue.alias === issueFilter);
   for (const issue of visible) {
     const row = document.createElement("p");
     const link = document.createElement("a");
@@ -241,6 +300,12 @@ async function githubAction(path, body) {
 
 function adopt(session) {
   if (!session?.office) return false;
+  if (session.projectId) rememberProject(session.projectId);
+  if (!draft.value.trim() && session.notices?.[0] && session.notices[0].projectId !== session.projectId) {
+    rememberProject(session.notices[0].projectId);
+    readSession().catch(() => {});
+    return true;
+  }
   confirmed = session;
   if (outbox && (session.office.messages ?? []).some((message) => message.from === "human" && message.text === outbox.text)) {
     outbox = null;
@@ -250,7 +315,7 @@ function adopt(session) {
 }
 
 async function readSession() {
-  const response = await fetch("/api/office/session", { cache: "no-store" });
+  const response = await fetch(sessionUrl(), { cache: "no-store" });
   const payload = await response.json();
   if (!response.ok) {
     sendStatus.textContent = payload.message || "讀不到 Group Chat。";
@@ -267,7 +332,7 @@ function stored(session, text) {
 }
 
 async function confirmSend(text) {
-  const response = await fetch("/api/office/session", { cache: "no-store", signal: AbortSignal.timeout(4000) });
+  const response = await fetch(sessionUrl(), { cache: "no-store", signal: AbortSignal.timeout(4000) });
   if (!response.ok) return null;
   const payload = await response.json();
   if (!stored(payload, text)) return null;
@@ -329,7 +394,7 @@ async function send(text) {
       const response = await fetch("/api/office/messages", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, projectId: currentProject(), typing: false }),
         cache: "no-store",
         signal: controller.signal,
       });
@@ -378,7 +443,7 @@ async function hire(candidateId, button) {
       method: "POST",
       headers: { "content-type": "application/json" },
       cache: "no-store",
-      body: JSON.stringify({ candidateId }),
+      body: JSON.stringify({ candidateId, projectId: currentProject() }),
     }), HIRE_TIMEOUT_MS);
     const payload = await response.json().catch(() => ({}));
     if (payload?.office) adopt(payload);
@@ -509,49 +574,77 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") readSession().catch(() => {});
 });
 
-function projectRow(project = {}) {
+function repoFields(repo = {}) {
   const row = document.createElement("div");
-  row.className = "ho-project";
-  row.dataset.id = project.id || "";
+  row.className = "ho-repo";
+  row.dataset.id = repo.id || "";
   row.innerHTML = `
-    <input class="ho-p-alias" type="text" placeholder="別名" autocomplete="off" />
-    <input class="ho-p-repo" type="text" placeholder="owner/repo" autocomplete="off" />
-    <input class="ho-p-labels" type="text" placeholder="這個專案的標籤 JSON，留白用共用" autocomplete="off" />
-    <input class="ho-p-token" type="password" placeholder="專案 token，留白用共用" autocomplete="off" />
-    <label><input class="ho-p-enabled" type="checkbox" /> 啟用</label>
-    <button type="button" class="ho-p-test">測試</button>
-    <button type="button" class="ho-p-remove">移除</button>
+    <input class="ho-r-alias" type="text" placeholder="別名" autocomplete="off" />
+    <input class="ho-r-repo" type="text" placeholder="owner/repo" autocomplete="off" />
+    <input class="ho-r-labels" type="text" placeholder="這個 repo 的標籤 JSON，留白用共用" autocomplete="off" />
+    <input class="ho-r-token" type="password" placeholder="repo token，留白用共用" autocomplete="off" />
+    <label><input class="ho-r-enabled" type="checkbox" /> 啟用</label>
+    <button type="button" class="ho-r-test">測試</button>
+    <button type="button" class="ho-r-remove">移除 repo</button>
   `;
-  row.querySelector(".ho-p-alias").value = project.alias || "";
-  row.querySelector(".ho-p-repo").value = project.owner && project.repo ? `${project.owner}/${project.repo}` : "";
-  row.querySelector(".ho-p-labels").value = project.labels ? JSON.stringify(project.labels) : "";
-  row.querySelector(".ho-p-enabled").checked = project.enabled !== false;
-  row.querySelector(".ho-p-remove").addEventListener("click", () => row.remove());
-  row.querySelector(".ho-p-test").addEventListener("click", () => githubAction("/api/office/github/test", { projectId: row.dataset.id || row.querySelector(".ho-p-repo").value.trim() }));
+  row.querySelector(".ho-r-alias").value = repo.alias || "";
+  row.querySelector(".ho-r-repo").value = repo.owner && repo.repo ? `${repo.owner}/${repo.repo}` : "";
+  row.querySelector(".ho-r-labels").value = repo.labels ? JSON.stringify(repo.labels) : "";
+  row.querySelector(".ho-r-enabled").checked = repo.enabled !== false;
+  row.querySelector(".ho-r-remove").addEventListener("click", () => row.remove());
+  row.querySelector(".ho-r-test").addEventListener("click", () => githubAction("/api/office/github/test", { repoId: row.dataset.id || row.querySelector(".ho-r-repo").value.trim() }));
   return row;
 }
 
-function readProjects() {
-  return [...root.querySelectorAll(".ho-project")].map((row) => {
-    const [owner, repo] = row.querySelector(".ho-p-repo").value.split("/");
-    const labelsText = row.querySelector(".ho-p-labels").value.trim();
-    return {
-      id: row.dataset.id || `${(owner || "").trim()}/${(repo || "").trim()}`,
-      alias: row.querySelector(".ho-p-alias").value.trim(),
-      owner: (owner || "").trim(),
-      repo: (repo || "").trim(),
-      enabled: row.querySelector(".ho-p-enabled").checked,
-      token: row.querySelector(".ho-p-token").value,
-      labels: labelsText ? JSON.parse(labelsText) : null,
-    };
+function projectCard(project = {}) {
+  const card = document.createElement("div");
+  card.className = "ho-project";
+  card.dataset.id = project.id || "";
+  card.innerHTML = `
+    <input class="ho-p-name" type="text" placeholder="專案名稱" autocomplete="off" />
+    <input class="ho-p-group" type="text" placeholder="Hermes 群組名稱" autocomplete="off" />
+    <div class="ho-repos"></div>
+    <button type="button" class="ho-p-add-repo">加一個 repo</button>
+    <button type="button" class="ho-p-remove">刪除專案</button>
+  `;
+  card.querySelector(".ho-p-name").value = project.name || "";
+  card.querySelector(".ho-p-group").value = project.group || project.name || "";
+  const repos = card.querySelector(".ho-repos");
+  for (const repo of project.repos?.length ? project.repos : [{ enabled: true }]) repos.append(repoFields(repo));
+  card.querySelector(".ho-p-add-repo").addEventListener("click", () => repos.append(repoFields({ enabled: true })));
+  card.querySelector(".ho-p-remove").addEventListener("click", () => {
+    if (root.querySelectorAll(".ho-project").length <= 1) return;
+    card.remove();
   });
+  return card;
+}
+
+function readProjects() {
+  return [...root.querySelectorAll(".ho-project")].map((card) => ({
+    id: card.dataset.id || card.querySelector(".ho-p-name").value.trim().toLowerCase().replace(/\s+/g, "-") || "project",
+    name: card.querySelector(".ho-p-name").value.trim(),
+    group: card.querySelector(".ho-p-group").value.trim(),
+    repos: [...card.querySelectorAll(".ho-repo")].map((row) => {
+      const [owner, repo] = row.querySelector(".ho-r-repo").value.split("/");
+      const labelsText = row.querySelector(".ho-r-labels").value.trim();
+      return {
+        id: row.dataset.id || `${(owner || "").trim()}/${(repo || "").trim()}`,
+        alias: row.querySelector(".ho-r-alias").value.trim(),
+        owner: (owner || "").trim(),
+        repo: (repo || "").trim(),
+        enabled: row.querySelector(".ho-r-enabled").checked,
+        token: row.querySelector(".ho-r-token").value,
+        labels: labelsText ? JSON.parse(labelsText) : null,
+      };
+    }).filter((repo) => repo.owner && repo.repo),
+  })).filter((project) => project.name && project.repos.length > 0);
 }
 
 async function loadGithub() {
   const response = await fetch("/api/office/github", { cache: "no-store" });
   const payload = await response.json();
   if (!response.ok) return;
-  root.querySelector("#ho-gh-projects").replaceChildren(...(payload.projects || []).map(projectRow));
+  root.querySelector("#ho-gh-projects").replaceChildren(...(payload.projects || []).map(projectCard));
   root.querySelector("#ho-gh-poll").value = payload.pollSeconds || 60;
   root.querySelector("#ho-gh-labels").value = JSON.stringify(payload.labels || {});
   root.querySelector("#ho-gh-auto").checked = payload.autoPost === true;
@@ -560,7 +653,7 @@ async function loadGithub() {
 }
 
 root.querySelector("#ho-gh-add").addEventListener("click", () => {
-  root.querySelector("#ho-gh-projects").append(projectRow({ enabled: true }));
+  root.querySelector("#ho-gh-projects").append(projectCard({ name: "", group: "", repos: [{ enabled: true }] }));
 });
 
 root.querySelector("#ho-gh-save").addEventListener("click", async () => {

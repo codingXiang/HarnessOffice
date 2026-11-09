@@ -114,21 +114,21 @@ test("an old single-repo file becomes a project list and #12 can name its repo",
   const file = path.join(dir, "github.json");
   fs.writeFileSync(file, JSON.stringify({ owner: "codingXiang", repo: "HarnessOffice", token: "ghp-old", pollSeconds: 60 }));
   const loaded = loadGithubSettings(file);
-  assert.equal(loaded.projects[0].id, "codingXiang/HarnessOffice");
+  assert.equal(loaded.projects[0].id, "harness-office");
+  assert.equal(loaded.projects[0].repos[0].id, "codingXiang/HarnessOffice");
   assert.equal(loaded.token, "ghp-old");
-  assert.equal(publicGithubSettings(loaded).projects[0].tokenSet, false);
+  assert.equal(publicGithubSettings(loaded).projects[0].repos[0].tokenSet, false);
   const projects = [
-    { id: "codingXiang/HarnessOffice", alias: "ho", owner: "codingXiang", repo: "HarnessOffice", enabled: true },
-    { id: "codingXiang/Other", alias: "other", owner: "codingXiang", repo: "Other", enabled: true },
+    { id: "harness-office", name: "HarnessOffice", group: "主群", repos: [{ id: "codingXiang/HarnessOffice", alias: "ho", owner: "codingXiang", repo: "HarnessOffice", enabled: true }] },
+    { id: "other", name: "另一個", group: "另一個群", repos: [{ id: "codingXiang/Other", alias: "other", owner: "codingXiang", repo: "Other", enabled: true }] },
   ];
   const issues = [
-    { number: 12, projectId: projects[0].id, alias: "ho", owner: "codingXiang", repo: "HarnessOffice", title: "fixture：甲" },
-    { number: 12, projectId: projects[1].id, alias: "other", owner: "codingXiang", repo: "Other", title: "fixture：乙" },
+    { number: 12, projectId: "codingXiang/HarnessOffice", officeProjectId: "harness-office", alias: "ho", owner: "codingXiang", repo: "HarnessOffice", title: "fixture：甲" },
+    { number: 12, projectId: "codingXiang/Other", officeProjectId: "other", alias: "other", owner: "codingXiang", repo: "Other", title: "fixture：乙" },
   ];
-  assert.equal(resolveProject({ alias: "other", number: 12 }, { projects, issues }).project.id, "codingXiang/Other");
-  assert.equal(resolveProject({ owner: "codingXiang", repo: "HarnessOffice", number: 12 }, { projects, issues }).project.alias, "ho");
-  assert.ok(resolveProject({ number: 12 }, { projects, issues }).ambiguous);
-  assert.equal(resolveProject({ number: 12 }, { projects, issues, activeProjectId: "codingXiang/Other" }).project.alias, "other");
+  assert.equal(resolveProject({ alias: "other", number: 12 }, { projects, issues }).project.id, "other");
+  assert.equal(resolveProject({ owner: "codingXiang", repo: "HarnessOffice", number: 12 }, { projects, issues }).project.group, "主群");
+  assert.equal(resolveProject({ number: 12 }, { projects, issues, activeProjectId: "other" }).project.id, "other");
   assert.equal(nextEnabledProject(projects, 1).alias, "other");
 });
 

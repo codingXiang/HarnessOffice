@@ -12,13 +12,19 @@ A fine-grained PAT needs:
 
 **測試連線** calls `GET /repos/{owner}/{repo}` and shows the repo full name plus the `permissions` object GitHub returns. It does not print the token.
 
-Several projects can be stored in the same file. An older file that only has `owner`, `repo`, and `token` is read as one project, and the token stays the shared default. Each project can have its own token, alias, enabled flag, and label map. A blank project token uses the shared one. The public settings list `tokenSet` per project and never return a token.
+A Project is one Hermes group. It has its own Group Chat, its own roster, and its own assignments, drafts, and pull requests. It is bound to at least one GitHub repo. The settings drawer can create, edit, and delete projects: name, Hermes group name, repos, a token or the shared default, and a label map. A blank repo token uses the shared token. The public settings list `tokenSet` and never return a token.
 
-Enabled projects are polled one at a time with `If-None-Match`. The panel can show all of them or one project. Each issue carries a repo badge. The same list is pushed to the 3D board as `gh.issues`.
+An older `github.json` that only has `owner`, `repo`, and `token` — or a list of repos from the previous settings screen — is read as the default project `harness-office`, group name `HarnessOffice`, bound to those repos. On startup the current `session.json` (the office that already has HR and anyone who was hired) is wrapped into that same project. Messages, the roster, and GitHub assignments stay. Nothing is dropped.
 
-`owner/repo#12`, `alias#12`, and a GitHub issue URL select that project. A plain `#12` uses the active project, or the assigned bot's project. If the number exists in more than one project and there is no context, the office asks which one and the panel shows a button per project. The active project follows the last issue a person or bot touched. The panel shows it and a click on a project name overrides it.
+Bots are hired per project. A role seated in one group is not seated in another. The default project keeps the profile names that already exist (`qa-he`, `pm-lin`, and the others), so a running Hermes session is not renamed. A later project hiring the same candidate uses the profile `<project id>--<candidate id>` and its own Hermes session, so the two groups do not share a transcript.
 
-Assignment stays in `session.json` (`github.assignments`, keyed by project and number). `@PM 把 #12 給 FE` and `@FE 看一下 #12` assign a role that is already in the office. The character card then says `working on #12`. Comments and pull requests are sent to that issue's own repo. OpenCode gets a cached clone per repo under the host temp directory `harness-office-repos/<owner>/<repo>`.
+The panel shows the current project and a button for each one. The browser remembers the last project in `localStorage` under `ho-active-project` (the project id only). Switching loads that group's chat, the people in the 3D office, their head bubbles, and that group's issue board.
+
+`owner/repo#12`, `alias#12`, and a GitHub issue URL that belong to another project switch to that group and deliver the message there. A new issue polled from another project's repo raises a notice. If the composer is empty, the panel follows it. If the person is still typing, the panel shows **切換到 …** and leaves the draft alone. A plain `#12` that exists in more than one group stays put and asks which group.
+
+Enabled repos are polled one at a time with `If-None-Match`. Inside one project the board can show every bound repo or one of them. Each issue carries a repo badge. Comments and pull requests go to that issue's own repo. OpenCode gets a cached clone per repo under `harness-office-repos/<owner>/<repo>`.
+
+Assignment stays on that project's record in `session.json`. `@PM 把 #12 給 FE` and `@FE 看一下 #12` assign a role that is already in that group. The character card then says `working on #12`.
 
 A comment is a draft until someone presses **發布到 GitHub**. The body is signed with the role name and an HTML marker `harness-office:<draft id>`. Posting again finds that marker and does not add a second comment. **自動發布** defaults off.
 

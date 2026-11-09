@@ -19,6 +19,8 @@ const ROLES = ["Tech Lead", "FE", "BE", "QA", "PM"];
 
 const PROJECT_COLORS = ["#118ab2", "#ef476f", "#06d6a0", "#ffd166", "#9b5de5", "#f78c6b"];
 
+export const DEFAULT_PROJECT_ID = "harness-office";
+
 export function emptyGithubSettings() {
   return {
     owner: "codingXiang",
@@ -27,15 +29,15 @@ export function emptyGithubSettings() {
     pollSeconds: 60,
     autoPost: false,
     labels: { ...DEFAULT_LABELS },
-    projects: [projectRecord({ owner: "codingXiang", repo: "HarnessOffice", alias: "ho" }, 0)],
+    projects: [officeProject({ id: DEFAULT_PROJECT_ID, name: "HarnessOffice", group: "HarnessOffice", repos: [{ owner: "codingXiang", repo: "HarnessOffice", alias: "ho" }] }, 0)],
   };
 }
 
-function projectRecord(raw, index) {
+function repoRecord(raw, index) {
   const owner = String(raw?.owner || "").trim();
   const repo = String(raw?.repo || "").trim();
   return {
-    id: String(raw?.id || (owner && repo ? `${owner}/${repo}` : `project-${index}`)),
+    id: String(raw?.id || (owner && repo ? `${owner}/${repo}` : `repo-${index}`)),
     alias: String(raw?.alias || "").trim(),
     owner,
     repo,
@@ -46,17 +48,48 @@ function projectRecord(raw, index) {
   };
 }
 
+function officeProject(raw, index) {
+  const repos = (Array.isArray(raw?.repos) ? raw.repos : []).map(repoRecord).filter((item) => item.owner && item.repo);
+  const name = String(raw?.name || raw?.group || "HarnessOffice").trim() || "HarnessOffice";
+  return {
+    id: String(raw?.id || `project-${index}`),
+    name,
+    group: String(raw?.group || name).trim() || name,
+    repos,
+  };
+}
+
+function sourceProjects(raw) {
+  if (Array.isArray(raw?.projects) && raw.projects.length > 0) {
+    const asRepos = raw.projects.every((item) => item?.owner && item?.repo && !item?.repos);
+    if (asRepos) {
+      return [{ id: DEFAULT_PROJECT_ID, name: "HarnessOffice", group: raw.group || "HarnessOffice", repos: raw.projects }];
+    }
+    return raw.projects;
+  }
+  if (raw?.owner || raw?.repo) {
+    return [{
+      id: DEFAULT_PROJECT_ID,
+      name: "HarnessOffice",
+      group: raw.group || "HarnessOffice",
+      repos: [{ owner: raw.owner, repo: raw.repo, alias: raw.alias || "ho" }],
+    }];
+  }
+  return emptyGithubSettings().projects;
+}
+
 export function normalizeGithubSettings(raw) {
   const base = emptyGithubSettings();
   const poll = Number(raw?.pollSeconds);
-  const source = Array.isArray(raw?.projects)
-    ? raw.projects
-    : [{ owner: raw?.owner || base.owner, repo: raw?.repo || base.repo, alias: raw?.alias || "ho" }];
-  const projects = source.map(projectRecord).filter((item) => item.owner && item.repo);
+  const projects = sourceProjects(raw).map(officeProject).filter((item) => item.id);
   const list = projects.length > 0 ? projects : base.projects;
+  for (const project of list) {
+    if (project.repos.length === 0) project.repos = [repoRecord({ owner: base.owner, repo: base.repo, alias: "ho" }, 0)];
+  }
+  const first = list[0].repos[0];
   return {
-    owner: list[0].owner,
-    repo: list[0].repo,
+    owner: first.owner,
+    repo: first.repo,
     token: String(raw?.token || ""),
     pollSeconds: Number.isFinite(poll) ? Math.min(600, Math.max(15, poll)) : base.pollSeconds,
     autoPost: raw?.autoPost === true,
@@ -65,10 +98,24 @@ export function normalizeGithubSettings(raw) {
   };
 }
 
+function publicRepo(repo) {
+  return {
+    id: repo.id,
+    alias: repo.alias,
+    owner: repo.owner,
+    repo: repo.repo,
+    enabled: repo.enabled,
+    color: repo.color,
+    labels: repo.labels,
+    tokenSet: repo.token !== "",
+    usesSharedToken: repo.token === "",
+  };
+}
+
 export function publicGithubSettings(settings) {
   const normalized = normalizeGithubSettings(settings);
   return {
-    configured: normalized.projects.some((project) => project.enabled && (project.token || normalized.token)),
+    configured: normalized.projects.some((project) => project.repos.some((repo) => repo.enabled && (repo.token || normalized.token))),
     owner: normalized.owner,
     repo: normalized.repo,
     pollSeconds: normalized.pollSeconds,
@@ -77,31 +124,38 @@ export function publicGithubSettings(settings) {
     tokenSet: normalized.token !== "",
     projects: normalized.projects.map((project) => ({
       id: project.id,
-      alias: project.alias,
-      owner: project.owner,
-      repo: project.repo,
-      enabled: project.enabled,
-      color: project.color,
-      labels: project.labels,
-      tokenSet: project.token !== "",
-      usesSharedToken: project.token === "",
+      name: project.name,
+      group: project.group,
+      repos: project.repos.map(publicRepo),
     })),
   };
 }
 
-export function tokenFor(settings, project) {
-  return project?.token || normalizeGithubSettings(settings).token || "";
+export function tokenFor(settings, repo) {
+  return repo?.token || normalizeGithubSettings(settings).token || "";
 }
 
-export function labelsFor(settings, project) {
+export function labelsFor(settings, repo) {
   const normalized = normalizeGithubSettings(settings);
-  return { ...normalized.labels, ...(project?.labels || {}) };
+  return { ...normalized.labels, ...(repo?.labels || {}) };
+}
+
+export function enabledRepos(settings) {
+  const normalized = normalizeGithubSettings(settings);
+  return normalized.projects.flatMap((project) => project.repos.filter((repo) => repo.enabled).map((repo) => ({ ...repo, officeProjectId: project.id })));
 }
 
 export function nextEnabledProject(projects, cursor = 0) {
-  const enabled = (projects ?? []).filter((project) => project.enabled !== false);
-  if (enabled.length === 0) return null;
-  return enabled[((cursor % enabled.length) + enabled.length) % enabled.length];
+  const repos = (projects ?? []).flatMap((project) => (project.repos || (project.owner ? [project] : [])).filter((repo) => repo.enabled !== false).map((repo) => ({ ...repo, officeProjectId: project.id || repo.id })));
+  if (repos.length === 0) return null;
+  return repos[((cursor % repos.length) + repos.length) % repos.length];
+}
+
+export function projectForRepo(settings, owner, repo) {
+  const normalized = normalizeGithubSettings(settings);
+  const foldedOwner = String(owner || "").toLowerCase();
+  const foldedRepo = String(repo || "").toLowerCase();
+  return normalized.projects.find((project) => project.repos.some((item) => item.owner.toLowerCase() === foldedOwner && item.repo.toLowerCase() === foldedRepo)) || null;
 }
 
 export function resolveGithubFile({
@@ -142,18 +196,26 @@ export function loadGithubSettings(file, { readFileSync = fs.readFileSync } = {}
   }
 }
 
+function mergeRepo(priorRepos, item) {
+  const prior = (priorRepos || []).find((repo) => repo.id === item.id || (repo.owner === item.owner && repo.repo === item.repo));
+  return { ...prior, ...item, token: item.token ? item.token : (prior?.token || ""), labels: item.labels ?? prior?.labels ?? null };
+}
+
 function mergeProjectList(previous, update) {
   if (Array.isArray(update?.projects)) {
     return update.projects.map((item) => {
-      const prior = previous.projects.find((project) => project.id === item.id || (project.owner === item.owner && project.repo === item.repo));
-      return { ...prior, ...item, token: item.token ? item.token : (prior?.token || ""), labels: item.labels ?? prior?.labels ?? null };
+      const prior = previous.projects.find((project) => project.id === item.id);
+      if (item?.owner && item?.repo && !item.repos) return mergeRepo(prior?.repos, item);
+      const repos = (item.repos || prior?.repos || []).map((repo) => mergeRepo(prior?.repos, repo));
+      return { ...prior, ...item, repos };
     });
   }
   if (update?.owner || update?.repo) {
-    const first = previous.projects[0] || {};
-    const owner = update.owner || first.owner;
-    const repo = update.repo || first.repo;
-    return [{ ...first, owner, repo, id: `${owner}/${repo}` }];
+    const first = previous.projects[0] || emptyGithubSettings().projects[0];
+    const repo = first.repos[0];
+    const owner = update.owner || repo.owner;
+    const name = update.repo || repo.repo;
+    return [{ ...first, repos: [{ ...repo, owner, repo: name, id: `${owner}/${name}` }, ...first.repos.slice(1)] }];
   }
   return previous.projects;
 }
@@ -246,7 +308,7 @@ export function toBoardIssue(issue, role) {
 
 export async function fetchIssues({ settings, project, fetchImpl, etag, timeoutMs = 20000 }) {
   const normalized = normalizeGithubSettings(settings);
-  const target = project || normalized.projects[0];
+  const target = project || normalized.projects[0]?.repos?.[0];
   const token = tokenFor(normalized, target);
   if (!token) return { ok: false, detail: "尚未設定 GitHub token。" };
   let response;
@@ -290,30 +352,32 @@ export function parseIssueRef(text) {
   return null;
 }
 
-export function resolveProject(ref, { projects = [], issues = [], activeProjectId = null, botProjectId = null } = {}) {
-  const enabled = projects.filter((project) => project.enabled !== false);
+export function resolveProject(ref, { projects = [], issues = [], activeProjectId = null } = {}) {
+  const normalized = projects.some((project) => project.repos) ? projects : normalizeGithubSettings({ projects }).projects;
   if (ref?.owner && ref?.repo) {
-    const hit = enabled.find((project) => project.owner.toLowerCase() === ref.owner.toLowerCase() && project.repo.toLowerCase() === ref.repo.toLowerCase());
-    return hit ? { project: hit } : { missing: true };
+    const hit = projectForRepo({ projects: normalized }, ref.owner, ref.repo);
+    return hit ? { project: hit, repo: hit.repos.find((item) => item.owner.toLowerCase() === ref.owner.toLowerCase() && item.repo.toLowerCase() === ref.repo.toLowerCase()) } : { missing: true };
   }
   if (ref?.alias) {
-    const hit = enabled.find((project) => project.alias.toLowerCase() === ref.alias.toLowerCase());
-    return hit ? { project: hit } : { missing: true };
+    const hit = normalized.find((project) => project.repos.some((repo) => repo.alias.toLowerCase() === ref.alias.toLowerCase()));
+    return hit ? { project: hit, repo: hit.repos.find((repo) => repo.alias.toLowerCase() === ref.alias.toLowerCase()) } : { missing: true };
   }
-  const holders = issues.filter((issue) => issue.number === ref?.number);
-  const ids = [...new Set(holders.map((issue) => issue.projectId).filter(Boolean))];
-  const preferred = botProjectId || activeProjectId;
-  if (ids.length === 1) return { project: enabled.find((project) => project.id === ids[0]) || { id: ids[0] } };
+  const holders = [];
+  for (const project of normalized) {
+    const seen = issues.filter((issue) => issue.number === ref?.number && (issue.officeProjectId === project.id || project.repos.some((repo) => repo.id === issue.projectId || repo.id === issue.repoId)));
+    for (const issue of seen) holders.push({ project, issue });
+  }
+  const ids = [...new Set(holders.map((item) => item.project.id))];
+  if (ids.length === 1) return { project: holders[0].project, repo: holders[0].project.repos.find((repo) => repo.id === holders[0].issue.projectId) || holders[0].project.repos[0] };
   if (ids.length > 1) {
-    if (preferred && ids.includes(preferred)) return { project: enabled.find((project) => project.id === preferred) };
-    return { ambiguous: holders.map((issue) => ({ projectId: issue.projectId, alias: issue.alias, owner: issue.owner, repo: issue.repo, number: issue.number, title: issue.title })) };
+    if (activeProjectId && ids.includes(activeProjectId)) {
+      const hit = holders.find((item) => item.project.id === activeProjectId);
+      return { project: hit.project, repo: hit.project.repos[0] };
+    }
+    return { ambiguous: holders.map((item) => ({ projectId: item.project.id, name: item.project.name, alias: item.issue.alias, owner: item.issue.owner, repo: item.issue.repo, number: item.issue.number, title: item.issue.title })) };
   }
-  if (preferred) {
-    const hit = enabled.find((project) => project.id === preferred);
-    if (hit) return { project: hit };
-  }
-  if (enabled.length === 1) return { project: enabled[0] };
-  return { ambiguous: enabled.map((project) => ({ projectId: project.id, alias: project.alias, owner: project.owner, repo: project.repo, number: ref?.number })) };
+  const current = normalized.find((project) => project.id === activeProjectId) || normalized[0];
+  return current ? { project: current, repo: current.repos[0] } : { missing: true };
 }
 
 export function repoWorktree(owner, repo, root = path.join(os.tmpdir(), "harness-office-repos")) {

@@ -69,7 +69,7 @@ _Avoid_: persona, system prompt, OpenCode config
 ### Collaboration
 
 **Project**:
-一件要組團隊來做的工作。一個 Project 對應一個 Group Chat。
+一件要組團隊來做的工作。一個 Project 對應一個 Group Chat，有自己的在場 Bot、對話、指派、草稿和 PR。Bot 不跨 Project 共用。一個 Project 可以綁一個或多個 GitHub repo。
 _Avoid_: repo, workspace, Office
 
 **Group Chat**:
